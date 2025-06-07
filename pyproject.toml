@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "rbe501-rl-arm-project"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+gymnasium = {extras = ["mujoco"], version = "^1.1.1"}
+torch = {version = "^2.7.1+cu128", source = "pytorch-gpu-src"}
+torchvision = {version = "^0.22.1+cu128", source = "pytorch-gpu-src"}
+torchaudio = {version = "^2.7.1+cu128", source = "pytorch-gpu-src"}
+stable-baselines3 = {extras = ["extra"], version = "^2.6.0"}
+
+
+[[tool.poetry.source]]
+name = "pytorch-gpu-src"
+url = "https://download.pytorch.org/whl/cu128"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
