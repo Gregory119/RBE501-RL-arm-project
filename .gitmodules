@@ -1,0 +1,3 @@
+[submodule "gymnasium_env/SO-ARM100"]
+	path = gymnasium_env/SO-ARM100
+	url = https://github.com/TheRobotStudio/SO-ARM100
