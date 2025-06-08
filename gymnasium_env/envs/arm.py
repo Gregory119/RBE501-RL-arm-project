@@ -1,3 +1,4 @@
+from os import path
 import numpy as np
 
 from gymnasium import utils
@@ -118,14 +119,15 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
 
     def __init__(
         self,
-        xml_file: str = "inverted_pendulum.xml",
         frame_skip: int = 2,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
         reset_noise_scale: float = 0.01,
         **kwargs,
     ):
+        xml_file = path.join(path.dirname(__file__), "../SO-ARM100/Simulation/SO101/scene.xml")
+            
         utils.EzPickle.__init__(self, xml_file, frame_skip, reset_noise_scale, **kwargs)
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64)
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(12,), dtype=np.float64)
 
         self._reset_noise_scale = reset_noise_scale
 
