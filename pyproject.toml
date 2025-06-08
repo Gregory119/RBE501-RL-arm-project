@@ -12,6 +12,7 @@ torch = {version = "^2.7.1+cu128", source = "pytorch-gpu-src"}
 torchvision = {version = "^0.22.1+cu128", source = "pytorch-gpu-src"}
 torchaudio = {version = "^2.7.1+cu128", source = "pytorch-gpu-src"}
 stable-baselines3 = {extras = ["extra"], version = "^2.6.0"}
+matplotlib = "^3.10.3"
 
 
 [[tool.poetry.source]]
