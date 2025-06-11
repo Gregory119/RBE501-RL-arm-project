@@ -119,15 +119,23 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
 
     def __init__(
         self,
+        xml_file: str | None = None,
         frame_skip: int = 2,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
         reset_noise_scale: float = 0.01,
         **kwargs,
     ):
-        xml_file = path.join(path.dirname(__file__), "../SO-ARM100/Simulation/SO101/scene.xml")
+        if xml_file is None:
+            xml_file = path.join(
+                path.dirname(__file__),
+                "SO-ARM100", "Simulation", "SO101", "scene.xml"
+            )
+        if not path.exists(xml_file):
+            raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
             
         utils.EzPickle.__init__(self, xml_file, frame_skip, reset_noise_scale, **kwargs)
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(12,), dtype=np.float64)
+        #observation_space = Box(low=-np.inf, high=np.inf, shape=(12,), dtype=np.float64)
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
         self._reset_noise_scale = reset_noise_scale
 
@@ -139,6 +147,14 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
             default_camera_config=default_camera_config,
             **kwargs,
         )
+        import mujoco 
+
+        if hasattr(self.model, "site_name2id"):           # mujoco-py style
+                    self.ee_sid = self.model.site_name2id("ee_site")
+        else:                                             # official bindings
+                    self.ee_sid = mujoco.mj_name2id(
+                        self.model, mujoco.mjtObj.mjOBJ_SITE, "ee_site"
+                    )
 
         self.metadata = {
             "render_modes": [
@@ -155,11 +171,16 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
             "qvel": self.data.qvel.size,
         }
 
+        self.goal   = np.zeros(3, dtype=np.float32) #initialize goal point
+        self.goal_radius = 0.02 #how close the ee needs to be to the goal to be considered successful
+        self.success = False
+
     def step(self, action):
         self.do_simulation(action, self.frame_skip)
 
-        observation = self._get_obs()
-
+        
+        obs = self._get_obs()
+        '''
         terminated = bool(
             not np.isfinite(observation).all() or (np.abs(observation[1]) > 0.2)
         )
@@ -167,13 +188,37 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
         reward = int(not terminated)
 
         info = {"reward_survive": reward}
+        '''
+
+        ####### Defining reward
+        ee_pos = self.data.site_xpos[self.ee_sid]
+        dist     = np.linalg.norm(ee_pos - self.goal)
+        reward = -dist
+
+        self.success = dist < self.goal_radius
+        if self.success:
+            reward += 5.0 
+
+        #terminate episode
+        terminated = False
+
+        info = {
+            "reward_distance": -dist,
+            "success": self.success
+
+        }
+        
 
         if self.render_mode == "human":
             self.render()
         # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
-        return observation, reward, terminated, False, info
+        #return observation, reward, terminated, False, info
+        return obs, reward, terminated, False, info
+
+
 
     def reset_model(self):
+        '''
         noise_low = -self._reset_noise_scale
         noise_high = self._reset_noise_scale
 
@@ -183,9 +228,18 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
         qvel = self.init_qvel + self.np_random.uniform(
             size=self.model.nv, low=noise_low, high=noise_high
         )
+        
         self.set_state(qpos, qvel)
+        '''
+        #Randomization of goal point
+        self.goal = self.np_random.uniform(
+            low = np.array([0.15, -0.15, 0.05]),  #lower bound
+            high = np.array([0.30, 0.15, 0.20]),  #upper bound
+        )
+        self.success = False
+
         return self._get_obs()
 
     def _get_obs(self):
-        return np.concatenate([self.data.qpos, self.data.qvel]).ravel()
+        return np.concatenate([self.data.qpos, self.data.qvel, self.goal]).ravel() #edited to return goal
     

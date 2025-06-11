@@ -1,0 +1,6 @@
+<mujoco model="dummy">
+    <worldbody>
+        <site name="ee_site" pos="0 0 0" size="0.01"/>
+    </worldbody>
+</mujoco>
+
