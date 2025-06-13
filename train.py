@@ -18,17 +18,21 @@ class TBCallback(BaseCallback):
         super().__init__(verbose)
         self.writer = writer
         self.ep_rew = 0
+        self.ep_len = 0
         self.ep_succ = 0
 
     def _on_step(self) -> bool:
         self.ep_rew += self.locals["rewards"][0]
+        self.ep_len += 1
         self.ep_succ += self.locals["infos"][0].get("success", 0)
         return True
 
     def _on_rollout_end(self):
+        self.writer.add_scalar("Rollout/episode_length", self.ep_len, self.num_timesteps)
         self.writer.add_scalar("Rollout/episode_reward", self.ep_rew, self.num_timesteps)
         self.writer.add_scalar("Rollout/episode_success", self.ep_succ, self.num_timesteps)
         self.ep_rew = 0
+        self.ep_len = 0
         self.ep_succ = 0
 
 
