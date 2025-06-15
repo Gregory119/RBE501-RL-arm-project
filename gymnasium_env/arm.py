@@ -1,7 +1,6 @@
 from os import path
 import numpy as np
 import mujoco 
-from gymnasium import utils
 from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from dataclasses import dataclass
@@ -12,7 +11,7 @@ DEFAULT_CAMERA_CONFIG = {
 }
 
 
-class ArmEnv(MujocoEnv, utils.EzPickle):
+class ArmEnv(MujocoEnv):
     
 
     metadata = {
@@ -43,9 +42,12 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
         xml_file: str | None = None,
         frame_skip: int = 2,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
-        reset_noise_scale: float = 0.01,
+        max_episode_steps=1000,
         **kwargs,
     ):
+        """
+        :param max_episode_steps Number of steps before timeout/truncation.
+        """
         if xml_file is None:
             xml_file = path.join(
                 path.dirname(__file__),
@@ -54,11 +56,10 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
         if not path.exists(xml_file):
             raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
             
-        utils.EzPickle.__init__(self, xml_file, frame_skip, reset_noise_scale, **kwargs)
-        
         observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
-        self._reset_noise_scale = reset_noise_scale
+        self.max_episode_steps = max_episode_steps
+        self.steps = 0
 
         # self.goal = np.zeros(3, dtype=np.float32) #initialize goal point
         self.goal = np.array([0.5,0.1,0.1])
@@ -81,12 +82,6 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
             "render_fps": int(np.round(1.0 / self.dt)),
         }
 
-        self.observation_structure = {
-            "qpos": self.data.qpos.size,
-            "qvel": self.data.qvel.size,
-        }
-
-        self.success = False
 
     def _load_env(self):
         if hasattr(self,"mujoco_renderer"):
@@ -102,6 +97,7 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
 
         
     def step(self, action):
+        self.steps += 1
         self.do_simulation(action, self.frame_skip)
 
         obs = self._get_obs()
@@ -111,25 +107,26 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
         dist     = np.linalg.norm(ee_pos - self.goal)
         reward = -dist
 
-        self.success = dist < self.goal_radius
-        if self.success:
-            reward += 5.0 
+        terminated = dist < self.goal_radius
+        if terminated:
+            reward += 5.0
 
-        #terminate episode
-        terminated = False
+        truncated = self.steps >= self.max_episode_steps
 
         info = {
             "reward_distance": -dist,
-            "success": self.success
-
+            "terminated": terminated,
+            "truncated": truncated,
         }
 
         if self.render_mode == "human":
             self.render()
-            # Visualize the site frames. This is a bit of a hack but it works and is simple.
+            # Visualize the site frames. This is a bit of a hack but it works
+            # and is simple. This is specifically done after self.render() to
+            # ensure that the renderer exists.
             self.mujoco_renderer.viewer.vopt.frame = mujoco.mjtFrame.mjFRAME_SITE
         
-        return obs, reward, terminated, False, info
+        return obs, reward, terminated, truncated, info
 
 
     def _sample_goal(self):
@@ -139,15 +136,16 @@ class ArmEnv(MujocoEnv, utils.EzPickle):
             high = np.array([0.2, -0.13, 0.25]),  #upper bound
         )
 
+    # override
     def reset_model(self):
+        self.steps=0
         #Randomization of goal point
         self.goal = self._sample_goal()
-        print(self.goal)
-        self.success = False
         self._load_env()
         mujoco.mj_forward(self.model, self.data)
         return self._get_obs()
 
+    
     def _get_obs(self):
         return np.concatenate([self.data.qpos, self.data.qvel, self.goal]).ravel() #edited to return goal
     
