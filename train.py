@@ -38,10 +38,13 @@ class TBCallback(BaseCallback):
 
 
 #start arm env
-def make_env(rank: int, seed: int = 0):
+def make_env(rank: int, vis: bool = False, seed: int = 0):
     def _init():
-        import gymnasium_env
-        env = gym.make("Arm-v0")
+        render_mode=None
+        if vis:
+            render_mode='human'
+
+        env = gym.make("Arm-v0",render_mode=render_mode)
         env = Monitor(env)  #log episode 
         env.reset(seed=seed + rank)
         return env
@@ -53,6 +56,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--total-steps", type=int, default=50_000)
 parser.add_argument("--logdir", type=str, default="runs/sac_arm")
 parser.add_argument("--num-envs", type=int, default=8)
+parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
 args = parser.parse_args()
 
 
@@ -62,7 +66,7 @@ if __name__ == "__main__":
     writer = SummaryWriter(args.logdir)
 
     # parallel envs
-    env_fns = [make_env(i) for i in range(args.num_envs)]
+    env_fns = [make_env(i,vis=args.vis) for i in range(args.num_envs)]
     env = SubprocVecEnv(env_fns)
 
     # SAC agent
