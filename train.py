@@ -8,6 +8,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 from stable_baselines3.common.monitor import Monitor
 from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.callbacks import BaseCallback
+import gymnasium_env
 
 
 
@@ -51,6 +52,7 @@ def make_env(rank: int, seed: int = 0):
 parser = argparse.ArgumentParser()
 parser.add_argument("--total-steps", type=int, default=50_000)
 parser.add_argument("--logdir", type=str, default="runs/sac_arm")
+parser.add_argument("--num-envs", type=int, default=8)
 args = parser.parse_args()
 
 
@@ -60,7 +62,7 @@ if __name__ == "__main__":
     writer = SummaryWriter(args.logdir)
 
     # parallel envs
-    env_fns = [make_env(i) for i in range(8)]
+    env_fns = [make_env(i) for i in range(args.num_envs)]
     env = SubprocVecEnv(env_fns)
 
     # SAC agent
