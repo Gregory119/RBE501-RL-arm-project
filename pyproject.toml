@@ -15,6 +15,7 @@ torchaudio = {version = "^2.7.1+cu128", source = "pytorch-gpu-src"}
 stable-baselines3 = {extras = ["extra"], version = "^2.6.0"}
 matplotlib = "^3.10.3"
 mediapy = "^1.2.4"
+mujoco = "^3.3.3"
 
 
 [[tool.poetry.source]]
