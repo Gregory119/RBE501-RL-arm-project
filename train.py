@@ -54,7 +54,7 @@ def make_env(rank: int, vis: bool = False, seed: int = 0):
 if __name__ == "__main__":
     #parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--total-steps", type=int, default=1000_000)
+    parser.add_argument("--total-steps", type=int, default=2000_000)
     parser.add_argument("--logdir", type=str, default="runs/sac_arm")
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
