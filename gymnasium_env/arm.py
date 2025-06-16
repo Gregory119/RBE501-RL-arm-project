@@ -42,7 +42,7 @@ class ArmEnv(MujocoEnv):
         xml_file: str | None = None,
         frame_skip: int = 2,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
-        max_episode_steps=1000,
+        max_episode_steps=500,
         **kwargs,
     ):
         """
@@ -103,7 +103,7 @@ class ArmEnv(MujocoEnv):
         obs = self._get_obs()
 
         ####### Defining reward
-        ee_pos = self.model.site("gripper").pos
+        ee_pos = self.data.site("gripper").xpos
         dist     = np.linalg.norm(ee_pos - self.goal)
         reward = -dist
 
