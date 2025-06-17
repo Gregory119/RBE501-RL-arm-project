@@ -5,6 +5,7 @@ from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from dataclasses import dataclass
 
+
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 0,
     "distance": 2.04,
@@ -109,7 +110,7 @@ class ArmEnv(MujocoEnv):
 
         terminated = dist < self.goal_radius
         if terminated:
-            reward += 5.0
+            reward += 10.0
 
         truncated = self.steps >= self.max_episode_steps
 
@@ -141,7 +142,16 @@ class ArmEnv(MujocoEnv):
         self.steps=0
         #Randomization of goal point
         self.goal = self._sample_goal()
-        self._load_env()
+
+        #self._load_env()
+        #Randomize Robot Start Position and velocity Each episode
+        noise_pos = self.np_random.uniform(low=-0.05, high=0.05, size=self.model.nq)
+        noise_vel = self.np_random.normal(loc=0.0, scale=0.02, size=self.model.nv)
+        qpos = self.init_qpos + noise_pos
+        qvel = self.init_qvel + noise_vel
+        self.set_state(qpos, qvel)
+
+        
         mujoco.mj_forward(self.model, self.data)
         return self._get_obs()
 

@@ -58,6 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--logdir", type=str, default="runs/sac_arm")
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
+    parser.add_argument ("--checkpoint", type=str)
     args = parser.parse_args()
 
     os.makedirs(args.logdir, exist_ok=True)
@@ -66,14 +67,22 @@ if __name__ == "__main__":
     env_fns = [make_env(i,vis=args.vis) for i in range(args.num_envs)]
     env = SubprocVecEnv(env_fns)
 
-    # SAC agent
-    model = SAC(
-        "MlpPolicy",
-        env,
-        verbose=0,
-        tensorboard_log=args.logdir,
-        device="auto",
-    )
+    # SAC agent, look for checkpoint argument
+    if args.checkpoint and os.path.isfile(args.checkpoint):
+        model = SAC.load(
+            args.checkpoint,
+            env=env,
+            tensorboard_log=args.logdir,
+            device="auto",
+        )
+    else: 
+        model = SAC(
+            "MlpPolicy",
+            env,
+            verbose=0,
+            tensorboard_log=args.logdir,
+            device="auto",
+        )
 
     # checkpoint saving , TensorBoard scalar logging
     checkpoint_cb = CheckpointCallback(
