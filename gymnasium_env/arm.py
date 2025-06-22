@@ -131,10 +131,18 @@ class ArmEnv(MujocoEnv):
 
     def _sample_goal(self):
         # the robot is facing in the -y direction
-        return self.np_random.uniform(
-            low = np.array([-0.2, -0.25, 0.075]),  #lower bound
-            high = np.array([0.2, -0.13, 0.25]),  #upper bound
+
+        # set limits in cylindrical coordinates
+        # rho, phi, z
+        rho, phi, z = self.np_random.uniform(
+            low = np.array([0.1143,-np.pi,0.075]),# lower bound
+            high = np.array([0.4064,np.pi,0.25]), # upper bound
         )
+
+        # transform cylindrical to cartesian coordinates
+        x = rho*np.cos(phi)
+        y = rho*np.sin(phi)
+        return np.array([x,y,z])
 
     # override
     def reset_model(self):
