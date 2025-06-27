@@ -136,7 +136,7 @@ class ArmEnv(MujocoEnv):
         # rho, phi, z
         rho, phi, z = self.np_random.uniform(
             low = np.array([0.1143,-np.pi,0.075]),# lower bound
-            high = np.array([0.4064,np.pi,0.25]), # upper bound
+            high = np.array([0.4064,0,0.25]), # upper bound
         )
 
         # transform cylindrical to cartesian coordinates

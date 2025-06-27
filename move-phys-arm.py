@@ -139,7 +139,7 @@ def createBounds():
     # set limits in cylindrical coordinates
     # rho, phi, z
     lower = np.array([0.1143,-np.pi,0.075])
-    upper = np.array([0.4064,np.pi,0.25])
+    upper = np.array([0.4064,0,0.25])
     return {'lower': lower, 'upper':upper}
         
 @draccus.wrap()
