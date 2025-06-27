@@ -14,12 +14,14 @@ python move-phys-arm.py \
 import logging
 import mujoco
 import time
+import signal
 from os import path
 from dataclasses import asdict, dataclass
 from pprint import pformat
 
 import draccus
 import numpy as np
+from types import FunctionType
 
 from lerobot.common.robots import (  # noqa: F401
     Robot,
@@ -41,7 +43,7 @@ class MoveConfig:
     commandline arguments."""
     robot: RobotConfig
     # Limit the maximum frames per second.
-    fps: int = 60
+    rate: int = 60
 
 @dataclass
 class CylCoord:
@@ -67,6 +69,12 @@ class CylCoord:
 class RobotBounds:
     lower: CylCoord
     upper: CylCoord
+
+
+def sig_handler(sig, frame):
+    global g_stop
+    if sig == signal.SIGINT: # Ctrl-C
+        g_stop = True
 
 
 def in_bounds(robot: Robot, bounds: RobotBounds) -> bool:
@@ -141,12 +149,12 @@ def reset_pos(robot: Robot, rate: int):
     print("position reset")
         
 
-def run_loop(robot: Robot, bounds: RobotBounds, fps: int, action: dict[str,int]):
-    reset_pos(robot,fps)
+def run_loop(robot: Robot, bounds: RobotBounds, rate: int, action: dict[str,int], stop_fn: FunctionType):
+    reset_pos(robot,rate)
 
     start = time.perf_counter()
     fault = False
-    while True:
+    while not stop_fn():
         loop_start = time.perf_counter()
 
         out_of_bounds = not in_bounds(robot, bounds)
@@ -154,7 +162,7 @@ def run_loop(robot: Robot, bounds: RobotBounds, fps: int, action: dict[str,int])
             # if ee not in bounds, then reset position and fault
             print('fault triggered')
             fault = True
-            reset_pos(robot,fps)
+            reset_pos(robot,rate)
         elif fault:
             pass
         else:
@@ -165,10 +173,12 @@ def run_loop(robot: Robot, bounds: RobotBounds, fps: int, action: dict[str,int])
         dt_s = time.perf_counter() - loop_start
         if dt_s < 0:
             print("failed to complete commands in loop duration")
-        busy_wait(1 / fps - dt_s)
+        busy_wait(1 / rate - dt_s)
 
         loop_s = time.perf_counter() - loop_start
 
+    reset_pos(robot,rate)
+        
 
 def createBounds():
     # set limits in cylindrical coordinates
@@ -176,9 +186,14 @@ def createBounds():
     lower = CylCoord(rho=0.1143,phi=-np.pi,z=0.075)
     upper = CylCoord(rho=0.4064,phi=0,z=0.25)
     return RobotBounds(lower=lower, upper=upper)
-        
+
+
+g_stop = False
+
 @draccus.wrap()
 def testMove(cfg: MoveConfig):
+    signal.signal(signal.SIGINT, sig_handler)
+    
     cfg.robot.use_degrees = True
 
     init_logging()
@@ -186,12 +201,13 @@ def testMove(cfg: MoveConfig):
 
     robot = make_robot_from_config(cfg.robot)
     robot.connect()
-
+    
     bounds = createBounds()
     action = {'shoulder_pan.pos': 0, 'shoulder_lift.pos': 0.0, 'elbow_flex.pos': 0, 'wrist_flex.pos': 0, 'wrist_roll.pos': 0, 'gripper.pos': 0}
+    stop_fn = lambda: g_stop
 
     try:
-        run_loop(robot, bounds, cfg.fps, action)
+        run_loop(robot, bounds, cfg.rate, action, stop_fn)
     except KeyboardInterrupt:
         pass
     finally:
