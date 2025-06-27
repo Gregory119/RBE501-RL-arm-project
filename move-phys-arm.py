@@ -37,13 +37,47 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 
 @dataclass
 class MoveConfig:
+    """Input configuration to this script which can be set using
+    commandline arguments."""
     robot: RobotConfig
     # Limit the maximum frames per second.
     fps: int = 60
 
+@dataclass
+class CylCoord:
+    """Represents cylindrical coordinates."""
+    rho: float = 0.0
+    phi: float = 0.0
+    z: float = 0.0
 
-def inbounds(robot: Robot, bounds: dict[str,float]):
-    #print("inbounds()")
+    def __lt__(self, other):
+        if not isinstance(other, CylCoord):
+            return NotImplemented
+
+        return self.rho < other.rho and self.phi < other.phi and self.z < other.z
+
+    def __gt__(self, other):
+        if not isinstance(other, CylCoord):
+            return NotImplemented
+
+        return self.rho > other.rho and self.phi > other.phi and self.z > other.z
+
+    
+@dataclass
+class RobotBounds:
+    lower: CylCoord
+    upper: CylCoord
+
+
+def in_bounds(robot: Robot, bounds: RobotBounds) -> bool:
+    """
+    Check if the robot is in bounds.
+    
+    @param bounds The bounds in cylindrical coordinates.
+    @return True if the robot is in bounds, otherwise false.
+    """
+    
+    #print("in_bounds()")
     # get current joint positions
     present_pos = robot.bus.sync_read("Present_Position")
     pos_deg = np.array([p for _,p in present_pos.items()])
@@ -69,36 +103,37 @@ def inbounds(robot: Robot, bounds: dict[str,float]):
     ee_phi = np.arctan2(y,x)
     ee_rho = np.linalg.norm([x,y])
     ee_z = z
-    ee_cyl = np.array([ee_rho, ee_phi, ee_z])
+    ee_cyl = CylCoord(rho=ee_rho, phi=ee_phi, z=ee_z)
     #print("ee_cyl: {}".format(ee_cyl))
     
     # check if ee in bounds
-    return np.all(ee_cyl > bounds['lower']) and np.all(ee_cyl < bounds['upper'])
+    return np.all(ee_cyl > bounds.lower) and np.all(ee_cyl < bounds.upper)
     
 
-def resetPos(robot: Robot, rate: int):
-    goal_pos = {'shoulder_pan.pos': 0, 'shoulder_lift.pos': -80.0, 'elbow_flex.pos': 90, 'wrist_flex.pos': 0, 'wrist_roll.pos': 0, 'gripper.pos': 0}
-    goal_pos_vec = np.array([p for _,p in goal_pos.items()])
-    robot.send_action(goal_pos)
+def reset_pos(robot: Robot, rate: int):
+    """Move the robot to a default start configuration."""
+
+    q_goal_dict = {'shoulder_pan.pos': 0, 'shoulder_lift.pos': -80.0, 'elbow_flex.pos': 90, 'wrist_flex.pos': 0, 'wrist_roll.pos': 0, 'gripper.pos': 0}
+    robot.send_action(q_goal_dict)
+
+    # By default the robot doesn't use integral gain so the joint position
+    # error can be large and depend on the robot configuration. Using joint
+    # position errors to check for reaching the goal is therefore
+    # unreliable. Instead wait for the joint velocity to reach close to
+    # zero after initially moving.
 
     # wait for robot to start moving
     busy_wait(1)
 
     # wait for robot to reach position (stop moving)
-    goal_tol = 0.01
-    while True:
-        # By default the robot doesn't use integral gain so the joint position
-        # error can be large and be different based on the robot
-        # configuration. Using joint position errors to check for reaching the
-        # goal is therefore unreliable. Instead wait for the joint velocity to
-        # reach close to zero after initially moving.
-        
-        present_vel = robot.bus.sync_read("Present_Velocity")
-        vel = np.array([v for _,v in present_vel.items()])
-        #print("vel {}".format(vel))
-        vel_norm = np.linalg.norm(vel)
-        print("vel_norm: {}".format(vel_norm))
-        if vel_norm < goal_tol:
+    dq_norm_tol = 0.01
+    while True:    
+        dq_dict = robot.bus.sync_read("Present_Velocity")
+        dq = np.array([v for _,v in dq_dict.items()])
+        #print("dq {}".format(dq))
+        dq_norm = np.linalg.norm(dq)
+        print("dq_norm: {}".format(dq_norm))
+        if dq_norm < dq_norm_tol:
             break
         # the wait duration doesn't have to be perfect so ignore duration of
         # sync_read()
@@ -106,20 +141,20 @@ def resetPos(robot: Robot, rate: int):
     print("position reset")
         
 
-def run_loop(robot: Robot, bounds: dict[str,float], fps: int, action: dict[str,int]):
-    resetPos(robot,fps)
+def run_loop(robot: Robot, bounds: RobotBounds, fps: int, action: dict[str,int]):
+    reset_pos(robot,fps)
 
     start = time.perf_counter()
     fault = False
     while True:
         loop_start = time.perf_counter()
 
-        # if ee not in bounds, then reset position
-        out_of_bounds = not inbounds(robot, bounds)
+        out_of_bounds = not in_bounds(robot, bounds)
         if not fault and out_of_bounds:
+            # if ee not in bounds, then reset position and fault
             print('fault triggered')
             fault = True
-            resetPos(robot,fps)
+            reset_pos(robot,fps)
         elif fault:
             pass
         else:
@@ -128,7 +163,7 @@ def run_loop(robot: Robot, bounds: dict[str,float], fps: int, action: dict[str,i
 
         # sleep remaining loop duration
         dt_s = time.perf_counter() - loop_start
-        if dt_s <0:
+        if dt_s < 0:
             print("failed to complete commands in loop duration")
         busy_wait(1 / fps - dt_s)
 
@@ -138,9 +173,9 @@ def run_loop(robot: Robot, bounds: dict[str,float], fps: int, action: dict[str,i
 def createBounds():
     # set limits in cylindrical coordinates
     # rho, phi, z
-    lower = np.array([0.1143,-np.pi,0.075])
-    upper = np.array([0.4064,0,0.25])
-    return {'lower': lower, 'upper':upper}
+    lower = CylCoord(rho=0.1143,phi=-np.pi,z=0.075)
+    upper = CylCoord(rho=0.4064,phi=0,z=0.25)
+    return RobotBounds(lower=lower, upper=upper)
         
 @draccus.wrap()
 def testMove(cfg: MoveConfig):
