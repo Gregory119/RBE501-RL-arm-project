@@ -17,21 +17,41 @@ import gymnasium_env
 class TBCallback(BaseCallback):
     def __init__(self, verbose=0):
         super().__init__(verbose)
-        self.ep_rew = 0
-        self.ep_len = 0
-        self.ep_succ = 0
+        self.first_step = True
 
     def _on_step(self) -> bool:
-        self.ep_rew += self.locals["rewards"][0]
-        self.ep_len += 1
-        term = self.locals["infos"][0].get("terminated", 0)
-        ep_end = term or self.locals["infos"][0].get("truncated", 0)
-        if ep_end:
-            self.logger.record("episode/length", self.ep_len, self.num_timesteps)
-            self.logger.record("episode/reward", self.ep_rew, self.num_timesteps)
-            self.logger.record("episode/terminated", term, self.num_timesteps)
-            self.ep_rew = 0
-            self.ep_len = 0
+        # initialize variables once the number of environments can be detected
+        if self.first_step:
+            self.num_envs = self.locals["env"].num_envs
+            self.ep_reward_sums = np.zeros((self.num_envs))
+            self.ep_lens = np.zeros((self.num_envs))
+            self.first_step = False
+
+        # rewards exist for each parallel environment so track the accumulated
+        # reward for each environment and then log the average of the ones that
+        # are done
+        dones = self.locals["dones"]
+        if np.sum(dones) > 0:
+            # average the accumulated rewards for the done episodes
+            ep_rew = np.sum(self.ep_reward_sums[dones])/np.sum(dones)
+            # average the lengths of the dones episodes
+            ep_len = np.sum(self.ep_lens[dones])/np.sum(dones)
+            self.logger.record("episode/length", ep_len, self.num_timesteps)
+            self.logger.record("episode/reward", ep_rew, self.num_timesteps)
+
+        # The reward just received for the done episodes is actually for the
+        # first step of the new episode, which is why they weren't added to the
+        # sum/accumulated reward before logging. Next reset the done episode
+        # rewards and then add the new set of rewards to the current array of
+        # reward sums.
+
+        # set the reward sum to zero for each done episode
+        self.ep_reward_sums[dones] = 0
+        self.ep_reward_sums += self.locals["rewards"]
+
+        # reset done episode lengths before increment
+        self.ep_lens[dones] = 0
+        self.ep_lens += 1
             
         return True
 

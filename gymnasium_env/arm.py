@@ -58,9 +58,6 @@ class ArmEnv(MujocoEnv):
             
         observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
-        self.max_episode_steps = max_episode_steps
-        self.steps = 0
-
         # self.goal = np.zeros(3, dtype=np.float32) #initialize goal point
         self.goal = np.array([0.5,0.1,0.1])
         self.goal_radius = 0.02 #how close the ee needs to be to the goal to be considered successful
@@ -70,7 +67,9 @@ class ArmEnv(MujocoEnv):
                                        observation_space=observation_space,
                                        default_camera_config=default_camera_config,
                                        kwargs=kwargs)
-        self._load_env()
+
+        self.max_episode_steps = max_episode_steps
+        self.reset_model()
         
         self.metadata = {
             "render_modes": [
@@ -103,18 +102,32 @@ class ArmEnv(MujocoEnv):
         obs = self._get_obs()
 
         ####### Defining reward
-        ee_pos = self.data.site("gripper").xpos
-        dist     = np.linalg.norm(ee_pos - self.goal)
-        reward = -dist
+        # The problem with using the negative distance as the reward is that the
+        # maximum accumulated reward depends on the start configuration. More
+        # specifically, the policy will only achieve a zero accumulated reward
+        # if the robot can move to the goal in one environment step.
 
+        # Instead the maximum accumulated reward can be set by making each
+        # reward equal to the difference in distance from the goal, normalized
+        # by the goal distance at the start of the episode. This ratio will be 1
+        # when the goal is reached (assuming zero tolerance), so it can be
+        # multiplied to give the desired maximum accumulated reward. The only
+        # problem is that the accumulated reward can be slightly larger than the
+        # desired max due to accumulated floating point resolution error in the
+        # dist difference.
+        ee_pos = self.data.site("gripper").xpos
+        dist = np.linalg.norm(ee_pos - self.goal)
+        assert(dist > 0)
+        reward = 100*(self.prev_dist-dist)/self.start_dist
+        self.prev_dist = dist
+        
         terminated = dist < self.goal_radius
         if terminated:
-            reward += 5.0
+            reward += 50.0
 
         truncated = self.steps >= self.max_episode_steps
 
         info = {
-            "reward_distance": -dist,
             "terminated": terminated,
             "truncated": truncated,
         }
@@ -151,6 +164,13 @@ class ArmEnv(MujocoEnv):
         self.goal = self._sample_goal()
         self._load_env()
         mujoco.mj_forward(self.model, self.data)
+
+        # setup initial distance for calculating the reward after the first step
+        ee_pos = self.data.site("gripper").xpos
+        self.prev_dist = np.linalg.norm(ee_pos - self.goal)
+        self.start_dist = self.prev_dist
+        assert(self.start_dist > 0)
+        
         return self._get_obs()
 
     
