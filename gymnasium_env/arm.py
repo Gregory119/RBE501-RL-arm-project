@@ -58,9 +58,7 @@ class ArmEnv(MujocoEnv):
             
         observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
-        # self.goal = np.zeros(3, dtype=np.float32) #initialize goal point
         self.goal = np.array([0.5,0.1,0.1])
-        self.goal_radius = 0.02 #how close the ee needs to be to the goal to be considered successful
 
         self.load_data = self.LoadData(xml_file=xml_file,
                                        frame_skip=frame_skip,
@@ -102,30 +100,26 @@ class ArmEnv(MujocoEnv):
         obs = self._get_obs()
 
         ####### Defining reward
-        # The problem with using the negative distance as the reward is that the
-        # maximum accumulated reward depends on the start configuration. More
-        # specifically, the policy will only achieve a zero accumulated reward
-        # if the robot can move to the goal in one environment step.
-
-        # Instead the maximum accumulated reward can be set by making each
-        # reward equal to the difference in distance from the goal, normalized
-        # by the goal distance at the start of the episode. This ratio will be 1
-        # when the goal is reached (assuming zero tolerance), so it can be
-        # multiplied to give the desired maximum accumulated reward. The only
-        # problem is that the accumulated reward can be slightly larger than the
-        # desired max due to accumulated floating point resolution error in the
-        # dist difference.
+        # Using a decaying exponential function based on the distance from the
+        # goal for the reward gives a maximum reward when the distance to the
+        # goal is zero. The policy is encouraged to move to this state as soon
+        # as possible so that the maximum reward is obtained for each step of
+        # the environment.
         ee_pos = self.data.site("gripper").xpos
         dist = np.linalg.norm(ee_pos - self.goal)
         assert(dist > 0)
-        reward = 100*(self.prev_dist-dist)/self.start_dist
-        self.prev_dist = dist
-        
-        terminated = dist < self.goal_radius
-        if terminated:
-            reward += 50.0
+        diff_dist = self.prev_dist - dist
+        # # if distance difference > 0 => moving toward the goal => reward > 0
+        # # if distance difference < 0 => moving away from the goal => reward < 0
+        # # if moving away from goal, then penalize the reward more
+        scale = 1 if diff_dist > 0 else 2
+
+        reward = np.exp(-scale*10*dist)
 
         truncated = self.steps >= self.max_episode_steps
+        # never terminate so that the policy keeps trying to improve even when
+        # the goal region is reached
+        terminated = False
 
         info = {
             "terminated": terminated,
