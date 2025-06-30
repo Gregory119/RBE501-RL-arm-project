@@ -80,6 +80,7 @@ class ArmEnv(MujocoEnv):
             ],
             "render_fps": int(np.round(1.0 / self.dt)),
         }
+        self.reached_goal = False
 
 
     def _load_env(self):
@@ -120,12 +121,20 @@ class ArmEnv(MujocoEnv):
         assert(dist > 0)
         reward = 100*(self.prev_dist-dist)/self.start_dist
         self.prev_dist = dist
-        
-        terminated = dist < self.goal_radius
-        if terminated:
+
+        # lets never terminate, only truncate so that when the robot gets to the
+        # goal region it learns to stay there
+        if dist < self.goal_radius and not self.reached_goal:
             reward += 50.0
+            self.reached_goal = True
+
+        # if the goal is not reached anymore, then remove the goal reward
+        if self.reached_goal and dist > self.goal_radius:
+            reward -= 50.0
+            self.reached_goal = False
 
         truncated = self.steps >= self.max_episode_steps
+        terminated = truncated and self.reached_goal
 
         info = {
             "terminated": terminated,
@@ -160,6 +169,7 @@ class ArmEnv(MujocoEnv):
     # override
     def reset_model(self):
         self.steps=0
+        self.reached_goal=False
         #Randomization of goal point
         self.goal = self._sample_goal()
         self._load_env()
