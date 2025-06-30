@@ -119,7 +119,12 @@ class ArmEnv(MujocoEnv):
         ee_pos = self.data.site("gripper").xpos
         dist = np.linalg.norm(ee_pos - self.goal)
         assert(dist > 0)
-        reward = 100*(self.prev_dist-dist)/self.start_dist
+        diff_dist = self.prev_dist - dist
+        # if distance difference > 0 => moving toward the goal => reward > 0
+        # if distance difference < 0 => moving away from the goal => reward < 0
+        # if moving away from goal, then double the reward for a higher penalty
+        scale = 1 if diff_dist > 0 else 2
+        reward = 100*scale*diff_dist/self.start_dist
         self.prev_dist = dist
 
         # lets never terminate, only truncate so that when the robot gets to the
