@@ -61,8 +61,8 @@ class ArmEnv(MujocoEnv):
             
         observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
-        self.max_episode_steps = max_episode_steps
-        self.steps = 0
+        #self.max_episode_steps = max_episode_steps
+        #self.steps = 0
 
         # self.goal = np.zeros(3, dtype=np.float32) #initialize goal point
         self.goal = np.array([0.5,0.1,0.1])
@@ -73,8 +73,10 @@ class ArmEnv(MujocoEnv):
                                        observation_space=observation_space,
                                        default_camera_config=default_camera_config,
                                        kwargs=kwargs)
-        self._load_env()
-        
+        #self._load_env()
+
+        self.max_episode_steps = max_episode_steps
+        self.reset_model()
         self.metadata = {
             "render_modes": [
                 "human",
@@ -107,17 +109,23 @@ class ArmEnv(MujocoEnv):
 
         ####### Defining reward
         ee_pos = self.data.site("gripper").xpos
+        '''
         dist     = np.linalg.norm(ee_pos - self.goal)
         reward = -dist
+        '''
+        dist = np.linalg.norm(ee_pos - self.goal)
+        assert(dist > 0)
+        reward = 100*(self.prev_dist-dist)/self.start_dist
+        self.prev_dist = dist
 
         terminated = dist < self.goal_radius
         if terminated:
-            reward += 10.0
+            reward += 50.0
 
         truncated = self.steps >= self.max_episode_steps
 
         info = {
-            "reward_distance": -dist,
+            #"reward_distance": -dist,
             "terminated": terminated,
             "truncated": truncated,
         }
@@ -211,8 +219,13 @@ class ArmEnv(MujocoEnv):
         
         noise_vel = self.np_random.normal(loc=0.0, scale=0.02, size=self.model.nv)
         qvel = self.init_qvel + noise_vel
-
         self.set_state(qpos, qvel)
+
+        ee_pos = self.data.site("gripper").xpos
+        self.prev_dist = np.linalg.norm(ee_pos - self.goal)
+        self.start_dist = self.prev_dist
+        assert(self.start_dist > 0)
+
         return self._get_obs()
 
     
