@@ -108,13 +108,8 @@ class ArmEnv(MujocoEnv):
         ee_pos = self.data.site("gripper").xpos
         dist = np.linalg.norm(ee_pos - self.goal)
         assert(dist > 0)
-        diff_dist = self.prev_dist - dist
-        # # if distance difference > 0 => moving toward the goal => reward > 0
-        # # if distance difference < 0 => moving away from the goal => reward < 0
-        # # if moving away from goal, then penalize the reward more
-        scale = 1 if diff_dist > 0 else 2
 
-        reward = np.exp(-scale*10*dist)
+        reward = np.exp(-10*dist)
 
         truncated = self.steps >= self.max_episode_steps
         # never terminate so that the policy keeps trying to improve even when
@@ -158,12 +153,6 @@ class ArmEnv(MujocoEnv):
         self.goal = self._sample_goal()
         self._load_env()
         mujoco.mj_forward(self.model, self.data)
-
-        # setup initial distance for calculating the reward after the first step
-        ee_pos = self.data.site("gripper").xpos
-        self.prev_dist = np.linalg.norm(ee_pos - self.goal)
-        self.start_dist = self.prev_dist
-        assert(self.start_dist > 0)
         
         return self._get_obs()
 
