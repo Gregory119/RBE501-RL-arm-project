@@ -91,7 +91,7 @@ def make_env(rank: int, vis: bool = False, seed: int = 0):
 if __name__ == "__main__":
     #parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--total-steps", type=int, default=2000_000)
+    parser.add_argument("--total-steps", type=int, default=4000_000)
     parser.add_argument("--num-checkpoints", type=int, default=10)
     parser.add_argument("--logdir", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
@@ -113,10 +113,12 @@ if __name__ == "__main__":
     env_fns = [make_env(i,vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
 
+    device = "auto"
     if args.alg == "SAC":
         alg = SAC
     elif args.alg == "PPO":
         alg = PPO
+        device = "cpu"
 
     # use a regular expression to extract the run number from the existing folder name
     run_num_re = re.compile(r".*run_([0-9]+)")
@@ -138,7 +140,7 @@ if __name__ == "__main__":
         "MlpPolicy",
         venv,
         verbose=0,
-        device="auto",
+        device=device,
         )
     model.set_logger(logger)
 
