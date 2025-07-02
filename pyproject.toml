@@ -7,7 +7,7 @@ package-mode = false
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.11"
 gymnasium = {extras = ["mujoco"], version = "^1.1.1"}
 torch = {version = "^2.7.1+cu128", source = "pytorch-gpu-src"}
 torchvision = {version = "^0.22.1+cu128", source = "pytorch-gpu-src"}
@@ -17,17 +17,26 @@ matplotlib = "^3.10.3"
 mediapy = "^1.2.4"
 mujoco = "^3.3.3"
 scipy = "^1.16.0"
+debugpy = "^1.8.14"
 
+[tool.poetry.group.hardware]
+optional = true
+
+# If you need to run hardware then checkout the lerobot repo at the following
+# relative directory, followed by installing it '$ poetry install --with
+# hardware'.
+[tool.poetry.group.hardware.dependencies]
+lerobot = {path = "../lerobot", extras = ["feetech"]}
+
+[tool.poetry.group.dev.dependencies]
+tensorboard = "^2.19.0"
+pytest = "^8.4.0"
 
 [[tool.poetry.source]]
 name = "pytorch-gpu-src"
 url = "https://download.pytorch.org/whl/cu128"
 priority = "explicit"
 
-
-[tool.poetry.group.dev.dependencies]
-tensorboard = "^2.19.0"
-pytest = "^8.4.0"
 
 [build-system]
 requires = ["poetry-core"]

@@ -61,22 +61,19 @@ class ArmEnv(MujocoEnv):
             
         observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
-        #self.max_episode_steps = max_episode_steps
-        #self.steps = 0
-
-        # self.goal = np.zeros(3, dtype=np.float32) #initialize goal point
         self.goal = np.array([0.5,0.1,0.1])
-        self.goal_radius = 0.02 #how close the ee needs to be to the goal to be considered successful
 
         self.load_data = self.LoadData(xml_file=xml_file,
                                        frame_skip=frame_skip,
                                        observation_space=observation_space,
                                        default_camera_config=default_camera_config,
                                        kwargs=kwargs)
-        #self._load_env()
+        self._load_env()
 
         self.max_episode_steps = max_episode_steps
+        self.steps = 0
         self.reset_model()
+        
         self.metadata = {
             "render_modes": [
                 "human",
@@ -108,24 +105,23 @@ class ArmEnv(MujocoEnv):
         obs = self._get_obs()
 
         ####### Defining reward
+        # Using a decaying exponential function based on the distance from the
+        # goal for the reward gives a maximum reward when the distance to the
+        # goal is zero. The policy is encouraged to move to this state as soon
+        # as possible so that the maximum reward is obtained for each step of
+        # the environment.
         ee_pos = self.data.site("gripper").xpos
-        '''
-        dist     = np.linalg.norm(ee_pos - self.goal)
-        reward = -dist
-        '''
         dist = np.linalg.norm(ee_pos - self.goal)
         assert(dist > 0)
-        reward = 100*(self.prev_dist-dist)/self.start_dist
-        self.prev_dist = dist
 
-        terminated = dist < self.goal_radius
-        if terminated:
-            reward += 50.0
+        reward = np.exp(-10*dist)
 
         truncated = self.steps >= self.max_episode_steps
+        # never terminate so that the policy keeps trying to improve even when
+        # the goal region is reached
+        terminated = False
 
         info = {
-            #"reward_distance": -dist,
             "terminated": terminated,
             "truncated": truncated,
         }
@@ -143,18 +139,17 @@ class ArmEnv(MujocoEnv):
     def _sample_goal(self):
         # the robot is facing in the -y direction
 
-        #set limits in cylindrical coordinates
-        #rho, phi, z
+        # set limits in cylindrical coordinates
+        # rho, phi, z
         rho, phi, z = self.np_random.uniform(
             low = np.array([0.1143,-np.pi,0.075]),# lower bound
-            high = np.array([0.4064,np.pi,0.25]), # upper bound
+            high = np.array([0.4064,0,0.25]), # upper bound
         )
 
         # transform cylindrical to cartesian coordinates
         x = rho*np.cos(phi)
         y = rho*np.sin(phi)
         return np.array([x,y,z])
-        
 
 
     def forward_Kinematics_ee(self, qpos, site_name = "gripper"):
@@ -198,6 +193,7 @@ class ArmEnv(MujocoEnv):
 
         return sol.x if sol.success else None
 
+
     # override
     def reset_model(self):
         self.steps=0
@@ -207,7 +203,6 @@ class ArmEnv(MujocoEnv):
 
         #Sample random point in world space for end effector
         start_xyz = self._sample_goal()
-        self._load_env() #this needs to be kept in order to keep the frame consistent with the new goal
         
         #get start pose for random ee position using inverse kinematics
         qpos = self.inverse_Kinematics(start_xyz)
@@ -226,6 +221,9 @@ class ArmEnv(MujocoEnv):
         self.start_dist = self.prev_dist
         assert(self.start_dist > 0)
 
+        self._load_env()
+        mujoco.mj_forward(self.model, self.data)
+        
         return self._get_obs()
 
     
