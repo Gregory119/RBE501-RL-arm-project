@@ -7,7 +7,7 @@ package-mode = false
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
 gymnasium = {extras = ["mujoco"], version = "^1.1.1"}
 torch = {version = "^2.7.1+cu128", source = "pytorch-gpu-src"}
 torchvision = {version = "^0.22.1+cu128", source = "pytorch-gpu-src"}
@@ -16,6 +16,7 @@ stable-baselines3 = {extras = ["extra"], version = "^2.6.0"}
 matplotlib = "^3.10.3"
 mediapy = "^1.2.4"
 mujoco = "^3.3.3"
+scipy = "^1.16.0"
 debugpy = "^1.8.14"
 
 [tool.poetry.group.hardware]

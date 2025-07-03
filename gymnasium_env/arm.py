@@ -4,6 +4,9 @@ import mujoco
 from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from dataclasses import dataclass
+from scipy.optimize import least_squares
+import mujoco
+
 
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 0,
@@ -65,8 +68,10 @@ class ArmEnv(MujocoEnv):
                                        observation_space=observation_space,
                                        default_camera_config=default_camera_config,
                                        kwargs=kwargs)
+        self._load_env()
 
         self.max_episode_steps = max_episode_steps
+        self.steps = 0
         self.reset_model()
         
         self.metadata = {
@@ -146,11 +151,76 @@ class ArmEnv(MujocoEnv):
         y = rho*np.sin(phi)
         return np.array([x,y,z])
 
+
+    def forward_Kinematics_ee(self, qpos, site_name = "gripper"):
+        
+        q_init = self.data.qpos.copy() #store the current state 
+        self.data.qpos[:] = qpos
+        mujoco.mj_kinematics(self.model, self.data)
+
+        #ee = self.model.site(name=site_name)
+        site_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_SITE, site_name
+        )
+        if site_id < 0:
+            raise ValueError(f"Site '{site_name}' not found in model.")
+        pos = self.data.site_xpos[site_id].copy()
+
+        self.data.qpos[:] = q_init #restore
+        return pos
+
+
+    def inverse_Kinematics(self, target_xyz, q_init= None, max_iter= 200):
+        if q_init is None:
+            q_init = self.init_qpos.copy()
+
+        #get the joint limits defined in the xml
+        lower, upper = self.model.jnt_range.T 
+
+        #nested error function for the solver
+        def error(q):  
+            return self.forward_Kinematics_ee(q) - target_xyz 
+
+        #numerical IK solver
+        sol = least_squares(
+            error,
+            q_init,
+            bounds = (lower,upper),
+            xtol = 1e-4, #minimum error for solution
+            max_nfev = max_iter, #maximum number of solver steps
+
+        )
+
+        return sol.x if sol.success else None
+
+
     # override
     def reset_model(self):
         self.steps=0
+
         #Randomization of goal point
         self.goal = self._sample_goal()
+
+        #Sample random point in world space for end effector
+        start_xyz = self._sample_goal()
+        
+        #get start pose for random ee position using inverse kinematics
+        qpos = self.inverse_Kinematics(start_xyz)
+
+        #If IK solver returns nothing, use added joint noise to randomize 
+        if qpos is None:
+            noise_pos = self.np_random.uniform(-0.05, 0.05, size=self.model.nq)
+            qpos = self.init_qpos + noise_pos 
+        
+        noise_vel = self.np_random.normal(loc=0.0, scale=0.02, size=self.model.nv)
+        qvel = self.init_qvel + noise_vel
+        self.set_state(qpos, qvel)
+
+        ee_pos = self.data.site("gripper").xpos
+        self.prev_dist = np.linalg.norm(ee_pos - self.goal)
+        self.start_dist = self.prev_dist
+        assert(self.start_dist > 0)
+
         self._load_env()
         mujoco.mj_forward(self.model, self.data)
         

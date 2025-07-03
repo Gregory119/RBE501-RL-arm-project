@@ -102,6 +102,7 @@ if __name__ == "__main__":
     train_parser.add_argument("--num-envs", type=int, default=8)
     eval_parser = subparsers.add_parser("eval")
     eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
+
     args = parser.parse_args()
 
     os.makedirs(args.logdir, exist_ok=True)
