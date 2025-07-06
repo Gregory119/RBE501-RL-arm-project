@@ -12,7 +12,8 @@ class ArmHw(ArmEnv):
     def _load_env(self):
         super()._load_env()
 
-        # todo: reset hardware position
+        # todo: configure and connect to robot
+        # todo: reset hardware position (convert between radians and degrees)
 
 
     def pre_step(self):

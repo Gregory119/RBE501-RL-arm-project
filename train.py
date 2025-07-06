@@ -86,24 +86,7 @@ def make_env(rank: int, vis: bool = False, seed: int = 0):
     return _init
 
 
-
-#train
-if __name__ == "__main__":
-    #parse arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--total-steps", type=int, default=4000_000)
-    parser.add_argument("--num-checkpoints", type=int, default=10)
-    parser.add_argument("--logdir", type=str, default="logs/")
-    parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
-    parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
-
-    subparsers = parser.add_subparsers(dest="mode")
-    train_parser = subparsers.add_parser("train")
-    train_parser.add_argument("--num-envs", type=int, default=8)
-    eval_parser = subparsers.add_parser("eval")
-    eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
-    args = parser.parse_args()
-
+def main(args):
     os.makedirs(args.logdir, exist_ok=True)
 
     # parallel envs
@@ -192,3 +175,28 @@ if __name__ == "__main__":
 
         print("Evaluation Done")
     venv.close()
+
+
+#train
+if __name__ == "__main__":
+    #parse arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--total-steps", type=int, default=4000_000)
+    parser.add_argument("--num-checkpoints", type=int, default=10)
+    parser.add_argument("--logdir", type=str, default="logs/")
+    parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
+    parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
+
+    subparsers = parser.add_subparsers(dest="mode")
+    train_parser = subparsers.add_parser("train")
+    train_parser.add_argument("--num-envs", type=int, default=8)
+    eval_parser = subparsers.add_parser("eval")
+    eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
+
+    args = parser.parse_args()
+
+    try:
+        main(args)
+    except Exception as e:
+        # todo: if running hardware environment, then reset to safe position
+        pass
