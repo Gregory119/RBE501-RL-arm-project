@@ -4,6 +4,7 @@ import mujoco
 from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from dataclasses import dataclass
+import copy
 
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 0,
@@ -42,11 +43,21 @@ class ArmEnv(MujocoEnv):
         xml_file: str | None = None,
         frame_skip: int = 2,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
-        max_episode_steps=500,
+        max_episode_steps = 500,
+        enable_normalize = True,
+        enable_terminate = False,
         **kwargs,
     ):
-        """
+        """Constructor
+
         :param max_episode_steps Number of steps before timeout/truncation.
+        :param enable_normalize If True, normalizes the observation
+        data, which improves reward performance.
+        :param enable_terminate If True, episodes are terminated when the ee
+        position is within a radius of the goal. Enabling this reduces
+        reward performance because future rewards in terminal states have a reward of
+        zero, resulting in the ee avoiding the goal region.
+
         """
         if xml_file is None:
             xml_file = path.join(
@@ -55,10 +66,15 @@ class ArmEnv(MujocoEnv):
             )
         if not path.exists(xml_file):
             raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
-            
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
-        self.goal = np.array([0.5,0.1,0.1])
+        self.enable_normalize = enable_normalize
+        self.enable_terminate = enable_terminate
+        if self.enable_normalize:
+            observation_space = Box(low=-1, high=1, shape=(15,), dtype=np.float64)
+        else:
+            observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
+
+        self._sample_goal()
 
         self.load_data = self.LoadData(xml_file=xml_file,
                                        frame_skip=frame_skip,
@@ -106,15 +122,16 @@ class ArmEnv(MujocoEnv):
         # as possible so that the maximum reward is obtained for each step of
         # the environment.
         ee_pos = self.data.site("gripper").xpos
-        dist = np.linalg.norm(ee_pos - self.goal)
+        dist = np.linalg.norm(ee_pos - self.goal_to_xyz())
         assert(dist > 0)
 
         reward = np.exp(-10*dist)
 
         truncated = self.steps >= self.max_episode_steps
-        # never terminate so that the policy keeps trying to improve even when
-        # the goal region is reached
-        terminated = False
+        # allow termination in the goal region, if enabled, but reward
+        # performance is better when this is disabled
+        goal_radius = 0.02
+        terminated = self.enable_terminate and dist < goal_radius
 
         info = {
             "terminated": terminated,
@@ -141,16 +158,22 @@ class ArmEnv(MujocoEnv):
             high = np.array([0.4064,0,0.25]), # upper bound
         )
 
+        self.goal_rpz = np.array([rho, phi, z])
+
+
+    def goal_to_xyz(self):
+        rho, phi, z = self.goal_rpz
         # transform cylindrical to cartesian coordinates
         x = rho*np.cos(phi)
         y = rho*np.sin(phi)
         return np.array([x,y,z])
 
+
     # override
     def reset_model(self):
         self.steps=0
         #Randomization of goal point
-        self.goal = self._sample_goal()
+        self._sample_goal()
         self._load_env()
         mujoco.mj_forward(self.model, self.data)
         
@@ -158,7 +181,25 @@ class ArmEnv(MujocoEnv):
 
     
     def _get_obs(self):
-        return np.concatenate([self.data.qpos, self.data.qvel, self.goal]).ravel() #edited to return goal
+        if self.enable_normalize:
+            # normalize observation data
+            q_max = np.pi
+            q_norm = copy.deepcopy(self.data.qpos) / q_max
+            dq_max = np.pi
+            dq_norm = copy.deepcopy(self.data.qvel) / dq_max
+            goal_rpz_norm = copy.deepcopy(self.goal_rpz)
+            goal_rpz_norm[0] = (goal_rpz_norm[0]-0.1143)/(0.4064-0.1143)
+            # remember y range is negative
+            goal_rpz_norm[1] = -goal_rpz_norm[1]/np.pi
+            goal_rpz_norm[2] = (goal_rpz_norm[2]-0.075)/(0.25-0.075)
+            # each normalized goal element is now within [0,1], but the other
+            # observations are within [-1,1] so adjust the goal elements to be
+            # within [-1,1]
+            goal_rpz_norm = goal_rpz_norm*2-1
+            obs = np.concatenate([q_norm, dq_norm, goal_rpz_norm]).ravel() #edited to return goal
+            return obs
+        else:
+            return np.concatenate([self.data.qpos, self.data.qvel, self.goal_rpz]).ravel()
     
 
     def _initialize_simulation(self) -> tuple["mujoco.MjModel", "mujoco.MjData"]:
@@ -170,7 +211,7 @@ class ArmEnv(MujocoEnv):
 
         # add sites whose frames will be displayed by default
 
-        # readd the gripper site (not sure why the already existing site is not
+        # re-add the gripper site (not sure why the already existing site is not
         # displayed)
         gripper_body = spec.body("gripper")
         gripper_site = spec.site("gripper")
@@ -179,7 +220,7 @@ class ArmEnv(MujocoEnv):
         
         # add a site for the goal
         spec.worldbody.add_site(
-            pos=self.goal,
+            pos=self.goal_to_xyz(),
             quat=[0, 1, 0, 0],
         )
         
