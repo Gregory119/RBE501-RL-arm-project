@@ -40,14 +40,12 @@ class ArmEnv(MujocoEnv):
         xml_file: str | None = None,
         frame_skip: int = 2,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
-        max_episode_steps = 500,
         enable_normalize = True,
         enable_terminate = False,
         **kwargs,
     ):
         """Constructor
 
-        :param max_episode_steps Number of steps before timeout/truncation.
         :param enable_normalize If True, normalizes the observation
         data, which improves reward performance.
         :param enable_terminate If True, episodes are terminated when the ee
@@ -79,15 +77,11 @@ class ArmEnv(MujocoEnv):
                                        default_camera_config=default_camera_config,
                                        kwargs=kwargs)
 
-        self.max_episode_steps = max_episode_steps
         self.reset_model()
         
         self.metadata = {
             "render_modes": [
                 "human",
-                "rgb_array",
-                "depth_array",
-                "rgbd_tuple",
             ],
             "render_fps": int(np.round(1.0 / self.dt)),
         }
@@ -104,10 +98,8 @@ class ArmEnv(MujocoEnv):
             default_camera_config=self.load_data.default_camera_config,
             **self.load_data.kwargs,
         )
-
         
     def step(self, action):
-        self.steps += 1
         self.do_simulation(action, self.frame_skip)
 
         obs = self._get_obs()
@@ -124,7 +116,8 @@ class ArmEnv(MujocoEnv):
 
         reward = np.exp(-10*dist)
 
-        truncated = self.steps >= self.max_episode_steps
+        # truncation by timeout is set externally
+        truncated = False
         # allow termination in the goal region, if enabled, but reward
         # performance is better when this is disabled
         goal_radius = 0.02
@@ -168,7 +161,6 @@ class ArmEnv(MujocoEnv):
 
     # override
     def reset_model(self):
-        self.steps=0
         #Randomization of goal point
         self._sample_goal()
         self._load_env()
