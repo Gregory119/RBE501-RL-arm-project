@@ -87,7 +87,7 @@ class ArmEnv(MujocoEnv):
         }
 
 
-    def _load_env(self):
+    def load_env(self):
         if hasattr(self,"mujoco_renderer"):
             self.close() # close the renderer
         MujocoEnv.__init__(
@@ -100,9 +100,9 @@ class ArmEnv(MujocoEnv):
         )
         
     def step(self, action):
-        self.do_simulation(action, self.frame_skip)
+        self.pre_step()
 
-        obs = self._get_obs()
+        obs = self.get_obs()
 
         ####### Defining reward
         # Using a decaying exponential function based on the distance from the
@@ -117,7 +117,7 @@ class ArmEnv(MujocoEnv):
         reward = np.exp(-10*dist)
 
         # truncation by timeout is set externally
-        truncated = False
+        truncated = self.should_truncate()
         # allow termination in the goal region, if enabled, but reward
         # performance is better when this is disabled
         goal_radius = 0.02
@@ -136,6 +136,14 @@ class ArmEnv(MujocoEnv):
             self.mujoco_renderer.viewer.vopt.frame = mujoco.mjtFrame.mjFRAME_SITE
         
         return obs, reward, terminated, truncated, info
+
+
+    def pre_step(self):
+        self.do_simulation(action, self.frame_skip)
+
+
+    def should_truncate(self):
+        return False
 
 
     def _sample_goal(self):
@@ -163,13 +171,13 @@ class ArmEnv(MujocoEnv):
     def reset_model(self):
         #Randomization of goal point
         self._sample_goal()
-        self._load_env()
+        self.load_env()
         mujoco.mj_forward(self.model, self.data)
         
-        return self._get_obs()
+        return self.get_obs()
 
     
-    def _get_obs(self):
+    def get_obs(self):
         if self.enable_normalize:
             # normalize observation data
             q_max = np.pi
