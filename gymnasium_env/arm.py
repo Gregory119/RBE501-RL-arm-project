@@ -5,13 +5,21 @@ from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from dataclasses import dataclass
 from scipy.optimize import least_squares
-import mujoco
 
+import copy
 
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 0,
     "distance": 2.04,
 }
+
+
+def rpz_to_xyz(self, rpz):
+    rho, phi, z = rpz
+    # transform cylindrical to cartesian coordinates
+    x = rho*np.cos(phi)
+    y = rho*np.sin(phi)
+    return np.array([x,y,z])
 
 
 class ArmEnv(MujocoEnv):
@@ -45,11 +53,21 @@ class ArmEnv(MujocoEnv):
         xml_file: str | None = None,
         frame_skip: int = 2,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
-        max_episode_steps=500,
+        max_episode_steps = 500,
+        enable_normalize = True,
+        enable_terminate = False,
         **kwargs,
     ):
-        """
+        """Constructor
+
         :param max_episode_steps Number of steps before timeout/truncation.
+        :param enable_normalize If True, normalizes the observation
+        data, which improves reward performance.
+        :param enable_terminate If True, episodes are terminated when the ee
+        position is within a radius of the goal. Enabling this reduces
+        reward performance because future rewards in terminal states have a reward of
+        zero, resulting in the ee avoiding the goal region.
+
         """
         if xml_file is None:
             xml_file = path.join(
@@ -58,10 +76,15 @@ class ArmEnv(MujocoEnv):
             )
         if not path.exists(xml_file):
             raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
-            
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
-        self.goal = np.array([0.5,0.1,0.1])
+        self.enable_normalize = enable_normalize
+        self.enable_terminate = enable_terminate
+        if self.enable_normalize:
+            observation_space = Box(low=-1, high=1, shape=(15,), dtype=np.float64)
+        else:
+            observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
+
+        self.goal_rpz = self._sample_pos_rpz()
 
         self.load_data = self.LoadData(xml_file=xml_file,
                                        frame_skip=frame_skip,
@@ -111,15 +134,16 @@ class ArmEnv(MujocoEnv):
         # as possible so that the maximum reward is obtained for each step of
         # the environment.
         ee_pos = self.data.site("gripper").xpos
-        dist = np.linalg.norm(ee_pos - self.goal)
+        dist = np.linalg.norm(ee_pos - self.goal_to_xyz())
         assert(dist > 0)
 
         reward = np.exp(-10*dist)
 
         truncated = self.steps >= self.max_episode_steps
-        # never terminate so that the policy keeps trying to improve even when
-        # the goal region is reached
-        terminated = False
+        # allow termination in the goal region, if enabled, but reward
+        # performance is better when this is disabled
+        goal_radius = 0.02
+        terminated = self.enable_terminate and dist < goal_radius
 
         info = {
             "terminated": terminated,
@@ -136,7 +160,7 @@ class ArmEnv(MujocoEnv):
         return obs, reward, terminated, truncated, info
 
 
-    def _sample_goal(self):
+    def _sample_pos_rpz(self):
         # the robot is facing in the -y direction
 
         # set limits in cylindrical coordinates
@@ -146,49 +170,43 @@ class ArmEnv(MujocoEnv):
             high = np.array([0.4064,0,0.25]), # upper bound
         )
 
-        # transform cylindrical to cartesian coordinates
-        x = rho*np.cos(phi)
-        y = rho*np.sin(phi)
-        return np.array([x,y,z])
+        return np.array([rho, phi, z])
 
 
     def forward_Kinematics_ee(self, qpos, site_name = "gripper"):
-        
-        q_init = self.data.qpos.copy() #store the current state 
+        # store the current state
+        q_init = self.data.qpos.copy()
+
+        # calculate FK
         self.data.qpos[:] = qpos
         mujoco.mj_kinematics(self.model, self.data)
+        ee_pos = self.data.site("gripper").xpos.copy()
 
-        #ee = self.model.site(name=site_name)
-        site_id = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_SITE, site_name
-        )
-        if site_id < 0:
-            raise ValueError(f"Site '{site_name}' not found in model.")
-        pos = self.data.site_xpos[site_id].copy()
+        # restore state
+        self.data.qpos[:] = q_init
+        mujoco.mj_kinematics(self.model, self.data)
 
-        self.data.qpos[:] = q_init #restore
-        return pos
+        return ee_pos
 
 
     def inverse_Kinematics(self, target_xyz, q_init= None, max_iter= 200):
         if q_init is None:
             q_init = self.init_qpos.copy()
 
-        #get the joint limits defined in the xml
+        # get the joint limits defined in the xml
         lower, upper = self.model.jnt_range.T 
 
-        #nested error function for the solver
+        # nested error function for the solver
         def error(q):  
             return self.forward_Kinematics_ee(q) - target_xyz 
 
-        #numerical IK solver
+        # numerical IK solver
         sol = least_squares(
             error,
             q_init,
             bounds = (lower,upper),
             xtol = 1e-4, #minimum error for solution
             max_nfev = max_iter, #maximum number of solver steps
-
         )
 
         return sol.x if sol.success else None
@@ -199,16 +217,26 @@ class ArmEnv(MujocoEnv):
         self.steps=0
 
         #Randomization of goal point
-        self.goal = self._sample_goal()
+        self.goal_rpz = self._sample_pos_rpz()
 
+        self._set_rand_arm_state()
+
+        self._load_env()
+        mujoco.mj_forward(self.model, self.data)
+
+        return self._get_obs()
+
+
+    def _set_rand_arm_state(self):
         #Sample random point in world space for end effector
-        start_xyz = self._sample_goal()
+        start_xyz = rpz_to_xyz(self._sample_pos_rpz())
         
         #get start pose for random ee position using inverse kinematics
         qpos = self.inverse_Kinematics(start_xyz)
 
         #If IK solver returns nothing, use added joint noise to randomize 
         if qpos is None:
+            print("Failed to solve IK")
             noise_pos = self.np_random.uniform(-0.05, 0.05, size=self.model.nq)
             qpos = self.init_qpos + noise_pos 
         
@@ -216,19 +244,27 @@ class ArmEnv(MujocoEnv):
         qvel = self.init_qvel + noise_vel
         self.set_state(qpos, qvel)
 
-        ee_pos = self.data.site("gripper").xpos
-        self.prev_dist = np.linalg.norm(ee_pos - self.goal)
-        self.start_dist = self.prev_dist
-        assert(self.start_dist > 0)
-
-        self._load_env()
-        mujoco.mj_forward(self.model, self.data)
-        
-        return self._get_obs()
-
     
     def _get_obs(self):
-        return np.concatenate([self.data.qpos, self.data.qvel, self.goal]).ravel() #edited to return goal
+        if self.enable_normalize:
+            # normalize observation data
+            q_max = np.pi
+            q_norm = copy.deepcopy(self.data.qpos) / q_max
+            dq_max = np.pi
+            dq_norm = copy.deepcopy(self.data.qvel) / dq_max
+            goal_rpz_norm = copy.deepcopy(self.goal_rpz)
+            goal_rpz_norm[0] = (goal_rpz_norm[0]-0.1143)/(0.4064-0.1143)
+            # remember y range is negative
+            goal_rpz_norm[1] = -goal_rpz_norm[1]/np.pi
+            goal_rpz_norm[2] = (goal_rpz_norm[2]-0.075)/(0.25-0.075)
+            # each normalized goal element is now within [0,1], but the other
+            # observations are within [-1,1] so adjust the goal elements to be
+            # within [-1,1]
+            goal_rpz_norm = goal_rpz_norm*2-1
+            obs = np.concatenate([q_norm, dq_norm, goal_rpz_norm]).ravel() #edited to return goal
+            return obs
+        else:
+            return np.concatenate([self.data.qpos, self.data.qvel, self.goal_rpz]).ravel()
     
 
     def _initialize_simulation(self) -> tuple["mujoco.MjModel", "mujoco.MjData"]:
@@ -240,7 +276,7 @@ class ArmEnv(MujocoEnv):
 
         # add sites whose frames will be displayed by default
 
-        # readd the gripper site (not sure why the already existing site is not
+        # re-add the gripper site (not sure why the already existing site is not
         # displayed)
         gripper_body = spec.body("gripper")
         gripper_site = spec.site("gripper")
@@ -249,7 +285,7 @@ class ArmEnv(MujocoEnv):
         
         # add a site for the goal
         spec.worldbody.add_site(
-            pos=self.goal,
+            pos=self.goal_to_xyz(),
             quat=[0, 1, 0, 0],
         )
         
