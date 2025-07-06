@@ -8,7 +8,7 @@ import copy
 
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 0,
-    "distance": 2.04,
+    "distance": 1.5,
 }
 
 
@@ -18,9 +18,6 @@ class ArmEnv(MujocoEnv):
     metadata = {
         "render_modes": [
             "human",
-            "rgb_array",
-            "depth_array",
-            "rgbd_tuple",
         ],
     }
 
