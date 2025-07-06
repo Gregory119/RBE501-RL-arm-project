@@ -14,7 +14,7 @@ DEFAULT_CAMERA_CONFIG = {
 }
 
 
-def rpz_to_xyz(self, rpz):
+def rpz_to_xyz(rpz):
     rho, phi, z = rpz
     # transform cylindrical to cartesian coordinates
     x = rho*np.cos(phi)
@@ -134,7 +134,7 @@ class ArmEnv(MujocoEnv):
         # as possible so that the maximum reward is obtained for each step of
         # the environment.
         ee_pos = self.data.site("gripper").xpos
-        dist = np.linalg.norm(ee_pos - self.goal_to_xyz())
+        dist = np.linalg.norm(ee_pos - rpz_to_xyz(self.goal_rpz))
         assert(dist > 0)
 
         reward = np.exp(-10*dist)
@@ -173,7 +173,7 @@ class ArmEnv(MujocoEnv):
         return np.array([rho, phi, z])
 
 
-    def forward_Kinematics_ee(self, qpos, site_name = "gripper"):
+    def forward_kinematics_ee(self, qpos, site_name = "gripper"):
         # store the current state
         q_init = self.data.qpos.copy()
 
@@ -189,7 +189,7 @@ class ArmEnv(MujocoEnv):
         return ee_pos
 
 
-    def inverse_Kinematics(self, target_xyz, q_init= None, max_iter= 200):
+    def inverse_kinematics(self, target_xyz, q_init= None, max_iter= 200):
         if q_init is None:
             q_init = self.init_qpos.copy()
 
@@ -198,7 +198,7 @@ class ArmEnv(MujocoEnv):
 
         # nested error function for the solver
         def error(q):  
-            return self.forward_Kinematics_ee(q) - target_xyz 
+            return self.forward_kinematics_ee(q) - target_xyz
 
         # numerical IK solver
         sol = least_squares(
@@ -219,9 +219,10 @@ class ArmEnv(MujocoEnv):
         #Randomization of goal point
         self.goal_rpz = self._sample_pos_rpz()
 
-        self._set_rand_arm_state()
-
         self._load_env()
+        # setting the arm state must be done after loading the environment,
+        # otherwise it will have no effect
+        self._set_rand_arm_state()
         mujoco.mj_forward(self.model, self.data)
 
         return self._get_obs()
@@ -229,10 +230,10 @@ class ArmEnv(MujocoEnv):
 
     def _set_rand_arm_state(self):
         #Sample random point in world space for end effector
-        start_xyz = rpz_to_xyz(self._sample_pos_rpz())
+        ee_start_xyz = rpz_to_xyz(self._sample_pos_rpz())
         
         #get start pose for random ee position using inverse kinematics
-        qpos = self.inverse_Kinematics(start_xyz)
+        qpos = self.inverse_kinematics(ee_start_xyz)
 
         #If IK solver returns nothing, use added joint noise to randomize 
         if qpos is None:
@@ -240,8 +241,9 @@ class ArmEnv(MujocoEnv):
             noise_pos = self.np_random.uniform(-0.05, 0.05, size=self.model.nq)
             qpos = self.init_qpos + noise_pos 
         
-        noise_vel = self.np_random.normal(loc=0.0, scale=0.02, size=self.model.nv)
-        qvel = self.init_qvel + noise_vel
+        # noise_vel = self.np_random.normal(loc=0.0, scale=0.02, size=self.model.nv)
+        # qvel = self.init_qvel + noise_vel
+        qvel = self.init_qvel
         self.set_state(qpos, qvel)
 
     
@@ -285,7 +287,7 @@ class ArmEnv(MujocoEnv):
         
         # add a site for the goal
         spec.worldbody.add_site(
-            pos=self.goal_to_xyz(),
+            pos=rpz_to_xyz(self.goal_rpz),
             quat=[0, 1, 0, 0],
         )
         
