@@ -38,7 +38,7 @@ class ArmEnv(MujocoEnv):
     def __init__(
         self,
         xml_file: str | None = None,
-        frame_skip: int = 2,
+        rate_hz: int = 200,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
         enable_normalize = True,
         enable_terminate = False,
@@ -71,6 +71,20 @@ class ArmEnv(MujocoEnv):
 
         self._sample_goal()
 
+        self.mj_timestep = 0.001
+        frame_skip = 4
+
+        # The number of skip frames specifies how many mujoco timesteps to
+        # simulate per call to step(). step() should be called at a simulation
+        # interval that matches the desired control/action rate, so calculate
+        # the number of skip frames to achieve this. Ideally this should work
+        # for rendering, but the mujoco renderer always renders at 60 fps (even
+        # after trying to modify values), which I suspect is due to a call to
+        # poll events.
+        if self.render_mode != "human":
+            mj_rate_hz = 1 / self.mj_timestep
+            frame_skip = int(mj_rate_hz / rate_hz)
+
         self.load_data = self.LoadData(xml_file=xml_file,
                                        frame_skip=frame_skip,
                                        observation_space=observation_space,
@@ -78,13 +92,6 @@ class ArmEnv(MujocoEnv):
                                        kwargs=kwargs)
 
         self.reset_model()
-        
-        self.metadata = {
-            "render_modes": [
-                "human",
-            ],
-            "render_fps": int(np.round(1.0 / self.dt)),
-        }
 
 
     def load_env(self):
@@ -100,7 +107,7 @@ class ArmEnv(MujocoEnv):
         )
         
     def step(self, action):
-        self.pre_step()
+        self.pre_step(action)
 
         obs = self.get_obs()
 
@@ -138,7 +145,7 @@ class ArmEnv(MujocoEnv):
         return obs, reward, terminated, truncated, info
 
 
-    def pre_step(self):
+    def pre_step(self,action):
         self.do_simulation(action, self.frame_skip)
 
 
@@ -226,4 +233,7 @@ class ArmEnv(MujocoEnv):
         model.vis.global_.offwidth = self.width
         model.vis.global_.offheight = self.height
         data = mujoco.MjData(model)
+
+        model.opt.timestep = self.mj_timestep
+
         return model, data
