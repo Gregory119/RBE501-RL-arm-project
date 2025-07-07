@@ -5,7 +5,6 @@ from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from dataclasses import dataclass
 import copy
-import time
 
 from scipy.optimize import least_squares
 
@@ -85,7 +84,8 @@ class ArmSimEnv(MujocoEnv):
             nonlocal observation_space
             observation_space = obs_space
             
-        self.arm = Arm(get_pos_fn=get_pos_fn,
+        self.arm = Arm(rate_hz=rate_hz,
+                       get_pos_fn=get_pos_fn,
                        get_vel_fn=get_vel_fn,
                        load_env_fn=load_env_fn,
                        should_truncate_fn=should_truncate_fn,
@@ -100,7 +100,6 @@ class ArmSimEnv(MujocoEnv):
         # interval that matches the desired control/action rate, so calculate
         # the number of skip frames to achieve this.
         self.mj_timestep = 0.001
-        self.rate_hz = rate_hz
         mj_rate_hz = 1 / self.mj_timestep
         frame_skip = int(mj_rate_hz / rate_hz)
 
@@ -111,8 +110,6 @@ class ArmSimEnv(MujocoEnv):
                                        kwargs=kwargs)
 
         self.load_env()
-
-        self.prev_step_ts_ns = None
 
 
     def load_env(self):
@@ -137,29 +134,7 @@ class ArmSimEnv(MujocoEnv):
         # stepped by the appropriate number of skip frames, so step() should be
         # called as fast as possible.
         if self.render_mode == "human":
-            step_ts_ns = time.perf_counter_ns()
-            if self.prev_step_ts_ns is not None:
-                dur = (step_ts_ns - self.prev_step_ts_ns)*1e-9
-                desired_dur = 1 / self.rate_hz
-                dur_diff = desired_dur - dur
-                if dur_diff > 0:
-                    time.sleep(dur_diff)
-
-            # display the measured rate
-            if self.prev_step_ts_ns is not None:
-                step_ts_ns = time.perf_counter_ns()
-                dur = (step_ts_ns - self.prev_step_ts_ns)*1e-9
-                actual_rate = 1 / dur
-                # note that the actual rate cannot go faster the 60 Hz because
-                # that's the limit of the mujoco renderer and probably the
-                # physical monitor limit
-                print("measured rate [Hz]: {}".format(actual_rate))
-
-            # step() is only being performed at this point and a sleep might have
-            # occurred in the above logic, so update the previous step timestep
-            # accordingly
-            self.prev_step_ts_ns = time.perf_counter_ns()
-
+            self.arm.step_sleep(display_rate=True)
         self.do_simulation(action, self.frame_skip)
         
         return self.arm.step(action, self.data)

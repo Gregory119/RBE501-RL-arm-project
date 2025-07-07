@@ -4,6 +4,7 @@ from gymnasium.spaces import Box
 from dataclasses import dataclass
 
 import copy
+import time
 
 
 def rpz_to_xyz(rpz):
@@ -20,6 +21,7 @@ class Arm:
     """
 
     def __init__(self,
+                 rate_hz: int,
                  get_pos_fn,
                  get_vel_fn,
                  load_env_fn,
@@ -39,6 +41,7 @@ class Arm:
         reward performance because future rewards in terminal states have a reward of
         zero, resulting in the ee avoiding the goal region."""
 
+        self.rate_hz = rate_hz
         self.get_pos_fn = get_pos_fn
         self.get_vel_fn = get_vel_fn
         self.load_env_fn = load_env_fn
@@ -56,6 +59,35 @@ class Arm:
         self.set_obs_space_fn(observation_space)
 
         self.goal_rpz = self.sample_pos_rpz()
+
+        self.prev_step_ts_ns = None
+
+    def step_sleep(self, display_rate=False):
+        """Call this within step() to sleep the required amount to meet the
+        desired step rate. This of course cannot take time away to speed up the
+        actual step rate."""
+        step_ts_ns = time.perf_counter_ns()
+        if self.prev_step_ts_ns is not None:
+            dur = (step_ts_ns - self.prev_step_ts_ns)*1e-9
+            desired_dur = 1 / self.rate_hz
+            dur_diff = desired_dur - dur
+            if dur_diff > 0:
+                time.sleep(dur_diff)
+
+        # display the measured rate
+        if display_rate and self.prev_step_ts_ns is not None:
+            step_ts_ns = time.perf_counter_ns()
+            dur = (step_ts_ns - self.prev_step_ts_ns)*1e-9
+            actual_rate = 1 / dur
+            # note that the actual rate cannot go faster the 60 Hz because
+            # that's the limit of the mujoco renderer and probably the
+            # physical monitor limit
+            print("measured rate [Hz]: {}".format(actual_rate))
+
+        # step() is only being performed at this point and a sleep might have
+        # occurred in the above logic, so update the previous step timestep
+        # accordingly
+        self.prev_step_ts_ns = time.perf_counter_ns()
 
 
     def step(self, action, mj_data):
