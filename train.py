@@ -89,7 +89,7 @@ def make_hw_env(robot, vis: bool = False):
     render_mode = None
     if vis:
         render_mode = 'human'
-    env = gym.make("ArmHw-v0",render_mode=render_mode)
+    env = gym.make("ArmHw-v0",render_mode=render_mode,robot=robot)
     env.reset()
     return env
 
@@ -104,7 +104,7 @@ def main(args, robot=None):
         num_envs = args.num_envs
     if args.hw:
         # one hardware environment
-        env_fns = [make_hw_env(vis=args.vis, robot=robot)]
+        env_fns = [make_hw_env(robot=robot, vis=args.vis)]
     else:
         env_fns = [make_sim_env(i,vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)

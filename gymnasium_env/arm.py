@@ -62,6 +62,11 @@ class Arm:
 
         self.prev_step_ts_ns = None
 
+        # workspace bounds
+        self.rpz_low = np.array([0.1143,-np.pi,0.075])
+        self.rpz_high = np.array([0.4064,0,0.25])
+
+
     def step_sleep(self, display_rate=False):
         """Call this within step() to sleep the required amount to meet the
         desired step rate. This of course cannot take time away to speed up the
@@ -128,11 +133,21 @@ class Arm:
         # set limits in cylindrical coordinates
         # rho, phi, z
         rho, phi, z = self.np_random.uniform(
-            low = np.array([0.1143,-np.pi,0.075]),# lower bound
-            high = np.array([0.4064,0,0.25]), # upper bound
+            low = self.rpz_low,
+            high = self.rpz_high,
         )
 
         return np.array([rho, phi, z])
+
+
+    def in_bounds(self, pos_xyz):
+        # convert xyz position to rpz and compare to bounds
+        rho = np.linalg.norm(pos_xyz[:2])
+        x, y, z = pos_xyz
+        phi = np.atan2(y, x)
+        pos_rpz = np.array([rho, phi, z])
+
+        return np.all(pos_rpz < self.rpz_high) and np.all(pos_rpz > self.rpz_low)
 
 
     def reset(self, model, mj_data):
@@ -151,19 +166,26 @@ class Arm:
         if self.enable_normalize:
             # normalize observation data
             q_max = np.pi
-            q_norm = copy.deepcopy(q) / q_max
+            q_new = copy.deepcopy(q) / q_max
+
             dq_max = np.pi
-            dq_norm = copy.deepcopy(dq) / dq_max
-            goal_rpz_norm = copy.deepcopy(self.goal_rpz)
-            goal_rpz_norm[0] = (goal_rpz_norm[0]-0.1143)/(0.4064-0.1143)
+            dq_new = copy.deepcopy(dq) / dq_max
+
+            high_rho, high_phi, high_z = self.rpz_high
+            low_rho, low_phi, low_z = self.rpz_low
+
+            rho, phi, z = self.goal_rpz
+            rho = (rho-low_rho)/(high_rho-low_rho)
             # remember y range is negative
-            goal_rpz_norm[1] = -goal_rpz_norm[1]/np.pi
-            goal_rpz_norm[2] = (goal_rpz_norm[2]-0.075)/(0.25-0.075)
+            phi = -(phi-low_phi)/(high_phi-low_phi)
+            z = (z-low_z)/(high_z-low_z)
+            goal_rpz_new = np.array([rho,phi,z])
             # each normalized goal element is now within [0,1], but the other
             # observations are within [-1,1] so adjust the goal elements to be
             # within [-1,1]
-            goal_rpz_norm = goal_rpz_norm*2-1
-            obs = np.concatenate([q_norm, dq_norm, goal_rpz_norm]).ravel() #edited to return goal
+            goal_rpz_new = goal_rpz_new*2-1
+
+            obs = np.concatenate([q_new, dq_new, goal_rpz_new]).ravel() #edited to return goal
             return obs
         else:
             return np.concatenate([q, dq, self.goal_rpz]).ravel()
