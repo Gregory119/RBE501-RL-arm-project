@@ -73,8 +73,7 @@ class TBCallback(BaseCallback):
         return True
 
 
-#start arm env
-def make_env(rank: int, vis: bool = False, seed: int = 0):
+def make_sim_env(rank: int, vis: bool = False, seed: int = 0):
     def _init():
         render_mode=None
         if vis:
@@ -86,14 +85,28 @@ def make_env(rank: int, vis: bool = False, seed: int = 0):
     return _init
 
 
-def main(args):
+def make_hw_env(robot, vis: bool = False):
+    render_mode = None
+    if vis:
+        render_mode = 'human'
+    env = gym.make("ArmHw-v0",render_mode=render_mode)
+    env.reset()
+    return env
+
+
+def main(args, robot=None):
     os.makedirs(args.logdir, exist_ok=True)
 
-    # parallel envs
+    # make environments
     num_envs = 1
-    if hasattr(args,"num_envs"):
+    if hasattr(args,"num_envs") and not args.hw:
+        # parallel simulation environment(s)
         num_envs = args.num_envs
-    env_fns = [make_env(i,vis=args.vis) for i in range(num_envs)]
+    if args.hw:
+        # one hardware environment
+        env_fns = [make_hw_env(vis=args.vis, robot=robot)]
+    else:
+        env_fns = [make_sim_env(i,vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
 
     device = "auto"
@@ -106,7 +119,7 @@ def main(args):
     # use a regular expression to extract the run number from the existing folder name
     run_num_re = re.compile(r".*run_([0-9]+)")
         
-    # Create and a logger for training and evaluation. It's possible to use a
+    # Create a logger for training and evaluation. It's possible to use a
     # default logger for training, but not for evaluation.
     folder_start = alg.__name__ + '_'
     log_dir_base = Path(os.path.dirname(__file__), args.logdir, args.mode)
@@ -177,6 +190,8 @@ def main(args):
     venv.close()
 
 
+g_robot = None
+
 #train
 if __name__ == "__main__":
     #parse arguments
@@ -192,11 +207,15 @@ if __name__ == "__main__":
     train_parser.add_argument("--num-envs", type=int, default=8)
     eval_parser = subparsers.add_parser("eval")
     eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
+    eval_parser.add_argument("--hw", help="use hardware environment", action="store_true")
 
     args = parser.parse_args()
 
     try:
-        main(args)
+        # if args.hw:
+        #     g_robot
+
+        main(args, robot=g_robot)
     except Exception as e:
         # todo: if running hardware environment, then reset to safe position
-        pass
+        raise
