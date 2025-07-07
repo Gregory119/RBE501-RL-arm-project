@@ -201,13 +201,13 @@ if __name__ == "__main__":
     parser.add_argument("--logdir", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
     parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
+    parser.add_argument("--hw", help="use hardware environment", action="store_true")
 
     subparsers = parser.add_subparsers(dest="mode")
     train_parser = subparsers.add_parser("train")
     train_parser.add_argument("--num-envs", type=int, default=8)
     eval_parser = subparsers.add_parser("eval")
     eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
-    eval_parser.add_argument("--hw", help="use hardware environment", action="store_true")
 
     args = parser.parse_args()
 
