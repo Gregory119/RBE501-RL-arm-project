@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import copy
 import time
 
-from .arm import Arm
+from scipy.optimize import least_squares
+
+from .arm import Arm, rpz_to_xyz
 
 
 DEFAULT_CAMERA_CONFIG = {
@@ -124,6 +126,9 @@ class ArmSimEnv(MujocoEnv):
             default_camera_config=self.load_data.default_camera_config,
             **self.load_data.kwargs,
         )
+        # setting the arm state must be done after loading the environment,
+        # otherwise it will have no effect
+        self._set_rand_arm_state()
 
 
     def step(self, action):
@@ -165,6 +170,64 @@ class ArmSimEnv(MujocoEnv):
         return self.arm.reset(self.model, self.data)
 
 
+    def forward_kinematics_ee(self, qpos, site_name = "gripper"):
+        # store the current state
+        q_init = self.data.qpos.copy()
+
+        # calculate FK
+        self.data.qpos[:] = qpos
+        mujoco.mj_kinematics(self.model, self.data)
+        ee_pos = self.data.site("gripper").xpos.copy()
+
+        # restore state
+        self.data.qpos[:] = q_init
+        mujoco.mj_kinematics(self.model, self.data)
+
+        return ee_pos
+
+
+    def inverse_kinematics(self, target_xyz, q_init= None, max_iter= 200):
+        if q_init is None:
+            q_init = self.init_qpos.copy()
+
+        # get the joint limits defined in the xml
+        lower, upper = self.model.jnt_range.T
+
+        # nested error function for the solver
+        def error(q):
+            return self.forward_kinematics_ee(q) - target_xyz
+
+        # numerical IK solver
+        sol = least_squares(
+            error,
+            q_init,
+            bounds = (lower,upper),
+            xtol = 1e-4, #minimum error for solution
+            max_nfev = max_iter, #maximum number of solver steps
+        )
+
+        return sol.x if sol.success else None
+
+
+    def _set_rand_arm_state(self):
+        #Sample random point in world space for end effector
+        ee_start_xyz = rpz_to_xyz(self.arm.sample_pos_rpz())
+
+        #get start pose for random ee position using inverse kinematics
+        qpos = self.inverse_kinematics(ee_start_xyz)
+
+        #If IK solver returns nothing, use added joint noise to randomize
+        if qpos is None:
+            print("Failed to solve IK")
+            noise_pos = self.np_random.uniform(-0.05, 0.05, size=self.model.nq)
+            qpos = self.init_qpos + noise_pos
+
+        # use a fixed joint velocity so that its guaranteed to be in
+        # normalization bounds
+        qvel = self.init_qvel
+        self.set_state(qpos, qvel)
+
+
     # override
     def _initialize_simulation(self) -> tuple["mujoco.MjModel", "mujoco.MjData"]:
         """
@@ -184,7 +247,7 @@ class ArmSimEnv(MujocoEnv):
         
         # add a site for the goal
         spec.worldbody.add_site(
-            pos=self.arm.goal_to_xyz(),
+            pos=rpz_to_xyz(self.arm.goal_rpz),
             quat=[0, 1, 0, 0],
         )
         

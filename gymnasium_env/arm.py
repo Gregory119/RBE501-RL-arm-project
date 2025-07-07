@@ -1,7 +1,17 @@
 import numpy as np
 import mujoco
 from gymnasium.spaces import Box
+from dataclasses import dataclass
+
 import copy
+
+
+def rpz_to_xyz(rpz):
+    rho, phi, z = rpz
+    # transform cylindrical to cartesian coordinates
+    x = rho*np.cos(phi)
+    y = rho*np.sin(phi)
+    return np.array([x,y,z])
 
 
 class Arm:
@@ -45,7 +55,8 @@ class Arm:
             observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
         self.set_obs_space_fn(observation_space)
 
-        self._sample_goal()
+        self.goal_rpz = self.sample_pos_rpz()
+
 
     def step(self, action, mj_data):
         obs = self.get_obs()
@@ -57,7 +68,7 @@ class Arm:
         # as possible so that the maximum reward is obtained for each step of
         # the environment.
         ee_pos = mj_data.site("gripper").xpos
-        dist = np.linalg.norm(ee_pos - self.goal_to_xyz())
+        dist = np.linalg.norm(ee_pos - rpz_to_xyz(self.goal_rpz))
         assert(dist > 0)
 
         reward = np.exp(-10*dist)
@@ -79,7 +90,7 @@ class Arm:
         return obs, reward, terminated, truncated, info
 
 
-    def _sample_goal(self):
+    def sample_pos_rpz(self):
         # the robot is facing in the -y direction
 
         # set limits in cylindrical coordinates
@@ -89,20 +100,12 @@ class Arm:
             high = np.array([0.4064,0,0.25]), # upper bound
         )
 
-        self.goal_rpz = np.array([rho, phi, z])
-
-
-    def goal_to_xyz(self):
-        rho, phi, z = self.goal_rpz
-        # transform cylindrical to cartesian coordinates
-        x = rho*np.cos(phi)
-        y = rho*np.sin(phi)
-        return np.array([x,y,z])
+        return np.array([rho, phi, z])
 
 
     def reset(self, model, mj_data):
         #Randomization of goal point
-        self._sample_goal()
+        self.goal_rpz = self.sample_pos_rpz()
         self.load_env_fn()
         mujoco.mj_forward(model, mj_data)
         
