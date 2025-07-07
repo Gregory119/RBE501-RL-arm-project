@@ -5,6 +5,10 @@ from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from dataclasses import dataclass
 import copy
+import time
+
+from .arm import Arm
+
 
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 0,
@@ -12,14 +16,12 @@ DEFAULT_CAMERA_CONFIG = {
 }
 
 
-class ArmEnv(MujocoEnv):
-    
+class ArmSimEnv(MujocoEnv):
 
     metadata = {
         "render_modes": [
-            "human",
-        ],
-    }
+        "human",
+        ],}
 
     class LoadData:
         def __init__(self,
@@ -38,7 +40,7 @@ class ArmEnv(MujocoEnv):
     def __init__(
         self,
         xml_file: str | None = None,
-        rate_hz: int = 200,
+        rate_hz: int = 250,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
         enable_normalize = True,
         enable_terminate = False,
@@ -62,28 +64,43 @@ class ArmEnv(MujocoEnv):
         if not path.exists(xml_file):
             raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
 
-        self.enable_normalize = enable_normalize
-        self.enable_terminate = enable_terminate
-        if self.enable_normalize:
-            observation_space = Box(low=-1, high=1, shape=(15,), dtype=np.float64)
-        else:
-            observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
+        # construct the arm class that has common arm environment functionality
+        
+        get_pos_fn = lambda: self.data.qpos
+        get_vel_fn = lambda: self.data.qvel
+        load_env_fn = lambda: self.load_env()
+        should_truncate_fn = lambda: False
+        def visualize():
+            if self.render_mode == "human":
+                self.render()
+                # Visualize the site frames. This is a bit of a hack but it works
+                # and is simple. This is specifically done after self.render() to
+                # ensure that the renderer exists.
+                self.mujoco_renderer.viewer.vopt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
-        self._sample_goal()
-
-        self.mj_timestep = 0.001
-        frame_skip = 4
+        observation_space = None
+        def set_obs_space(obs_space):
+            nonlocal observation_space
+            observation_space = obs_space
+            
+        self.arm = Arm(get_pos_fn=get_pos_fn,
+                       get_vel_fn=get_vel_fn,
+                       load_env_fn=load_env_fn,
+                       should_truncate_fn=should_truncate_fn,
+                       vis_fn=visualize,
+                       set_obs_space_fn=set_obs_space,
+                       np_random=self.np_random,
+                       enable_normalize=enable_normalize,
+                       enable_terminate=enable_terminate)
 
         # The number of skip frames specifies how many mujoco timesteps to
         # simulate per call to step(). step() should be called at a simulation
         # interval that matches the desired control/action rate, so calculate
-        # the number of skip frames to achieve this. Ideally this should work
-        # for rendering, but the mujoco renderer always renders at 60 fps (even
-        # after trying to modify values), which I suspect is due to a call to
-        # poll events.
-        if self.render_mode != "human":
-            mj_rate_hz = 1 / self.mj_timestep
-            frame_skip = int(mj_rate_hz / rate_hz)
+        # the number of skip frames to achieve this.
+        self.mj_timestep = 0.001
+        self.rate_hz = rate_hz
+        mj_rate_hz = 1 / self.mj_timestep
+        frame_skip = int(mj_rate_hz / rate_hz)
 
         self.load_data = self.LoadData(xml_file=xml_file,
                                        frame_skip=frame_skip,
@@ -91,7 +108,9 @@ class ArmEnv(MujocoEnv):
                                        default_camera_config=default_camera_config,
                                        kwargs=kwargs)
 
-        self.reset_model()
+        self.load_env()
+
+        self.prev_step_ts_ns = None
 
 
     def load_env(self):
@@ -105,107 +124,48 @@ class ArmEnv(MujocoEnv):
             default_camera_config=self.load_data.default_camera_config,
             **self.load_data.kwargs,
         )
-        
+
+
     def step(self, action):
-        self.pre_step(action)
-
-        obs = self.get_obs()
-
-        ####### Defining reward
-        # Using a decaying exponential function based on the distance from the
-        # goal for the reward gives a maximum reward when the distance to the
-        # goal is zero. The policy is encouraged to move to this state as soon
-        # as possible so that the maximum reward is obtained for each step of
-        # the environment.
-        ee_pos = self.data.site("gripper").xpos
-        dist = np.linalg.norm(ee_pos - self.goal_to_xyz())
-        assert(dist > 0)
-
-        reward = np.exp(-10*dist)
-
-        # truncation by timeout is set externally
-        truncated = self.should_truncate()
-        # allow termination in the goal region, if enabled, but reward
-        # performance is better when this is disabled
-        goal_radius = 0.02
-        terminated = self.enable_terminate and dist < goal_radius
-
-        info = {
-            "terminated": terminated,
-            "truncated": truncated,
-        }
-
+        # If rendering, ensure that step is not called faster than the desired
+        # rate. This is not needed when not rendering because the simulation is
+        # stepped by the appropriate number of skip frames, so step() should be
+        # called as fast as possible.
         if self.render_mode == "human":
-            self.render()
-            # Visualize the site frames. This is a bit of a hack but it works
-            # and is simple. This is specifically done after self.render() to
-            # ensure that the renderer exists.
-            self.mujoco_renderer.viewer.vopt.frame = mujoco.mjtFrame.mjFRAME_SITE
-        
-        return obs, reward, terminated, truncated, info
+            step_ts_ns = time.perf_counter_ns()
+            if self.prev_step_ts_ns is not None:
+                dur = (step_ts_ns - self.prev_step_ts_ns)*1e-9
+                desired_dur = 1 / self.rate_hz
+                dur_diff = desired_dur - dur
+                if dur_diff > 0:
+                    time.sleep(dur_diff)
 
+            # display the measured rate
+            if self.prev_step_ts_ns is not None:
+                step_ts_ns = time.perf_counter_ns()
+                dur = (step_ts_ns - self.prev_step_ts_ns)*1e-9
+                actual_rate = 1 / dur
+                # note that the actual rate cannot go faster the 60 Hz because
+                # that's the limit of the mujoco renderer and probably the
+                # physical monitor limit
+                print("measured rate [Hz]: {}".format(actual_rate))
 
-    def pre_step(self,action):
+            # step() is only being performed at this point and a sleep might have
+            # occurred in the above logic, so update the previous step timestep
+            # accordingly
+            self.prev_step_ts_ns = time.perf_counter_ns()
+
         self.do_simulation(action, self.frame_skip)
-
-
-    def should_truncate(self):
-        return False
-
-
-    def _sample_goal(self):
-        # the robot is facing in the -y direction
-
-        # set limits in cylindrical coordinates
-        # rho, phi, z
-        rho, phi, z = self.np_random.uniform(
-            low = np.array([0.1143,-np.pi,0.075]),# lower bound
-            high = np.array([0.4064,0,0.25]), # upper bound
-        )
-
-        self.goal_rpz = np.array([rho, phi, z])
-
-
-    def goal_to_xyz(self):
-        rho, phi, z = self.goal_rpz
-        # transform cylindrical to cartesian coordinates
-        x = rho*np.cos(phi)
-        y = rho*np.sin(phi)
-        return np.array([x,y,z])
+        
+        return self.arm.step(action, self.data)
 
 
     # override
     def reset_model(self):
-        #Randomization of goal point
-        self._sample_goal()
-        self.load_env()
-        mujoco.mj_forward(self.model, self.data)
-        
-        return self.get_obs()
+        return self.arm.reset(self.model, self.data)
 
-    
-    def get_obs(self):
-        if self.enable_normalize:
-            # normalize observation data
-            q_max = np.pi
-            q_norm = copy.deepcopy(self.data.qpos) / q_max
-            dq_max = np.pi
-            dq_norm = copy.deepcopy(self.data.qvel) / dq_max
-            goal_rpz_norm = copy.deepcopy(self.goal_rpz)
-            goal_rpz_norm[0] = (goal_rpz_norm[0]-0.1143)/(0.4064-0.1143)
-            # remember y range is negative
-            goal_rpz_norm[1] = -goal_rpz_norm[1]/np.pi
-            goal_rpz_norm[2] = (goal_rpz_norm[2]-0.075)/(0.25-0.075)
-            # each normalized goal element is now within [0,1], but the other
-            # observations are within [-1,1] so adjust the goal elements to be
-            # within [-1,1]
-            goal_rpz_norm = goal_rpz_norm*2-1
-            obs = np.concatenate([q_norm, dq_norm, goal_rpz_norm]).ravel() #edited to return goal
-            return obs
-        else:
-            return np.concatenate([self.data.qpos, self.data.qvel, self.goal_rpz]).ravel()
-    
 
+    # override
     def _initialize_simulation(self) -> tuple["mujoco.MjModel", "mujoco.MjData"]:
         """
         Initialize MuJoCo simulation data structures `mjModel` and `mjData`.
@@ -224,7 +184,7 @@ class ArmEnv(MujocoEnv):
         
         # add a site for the goal
         spec.worldbody.add_site(
-            pos=self.goal_to_xyz(),
+            pos=self.arm.goal_to_xyz(),
             quat=[0, 1, 0, 0],
         )
         
