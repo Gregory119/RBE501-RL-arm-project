@@ -79,7 +79,7 @@ def make_sim_env(rank: int, vis: bool = False, seed: int = 0):
         if vis:
             render_mode='human'
 
-        env = gym.make("Arm-v0",render_mode=render_mode)
+        env = gym.make("ArmSim-v0",render_mode=render_mode)
         env.reset(seed=seed + rank)
         return env
     return _init

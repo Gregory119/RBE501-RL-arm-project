@@ -1,17 +1,21 @@
 from os import path
 import numpy as np
-import mujoco 
+import mujoco
+import gymnasium as gym
+import copy
+
 from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from dataclasses import dataclass
-import copy
 
 
-class ArmHw(ArmEnv):
+class ArmHw(gym.Env):
+
+    def __init__(self):
+        # todo: throw if robot is None
+        # todo: disallow rendering
 
     def _load_env(self):
-        super()._load_env()
-
         # todo: configure and connect to robot
         # todo: reset hardware position (convert between radians and degrees)
 
