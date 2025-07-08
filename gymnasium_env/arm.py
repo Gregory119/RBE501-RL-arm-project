@@ -58,13 +58,13 @@ class Arm:
             observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
         self.set_obs_space_fn(observation_space)
 
-        self.goal_rpz = self.sample_pos_rpz()
-
-        self.prev_step_ts_ns = None
-
         # workspace bounds
         self.rpz_low = np.array([0.1143,-np.pi,0.075])
         self.rpz_high = np.array([0.4064,0,0.25])
+
+        self.goal_rpz = self.sample_pos_rpz()
+
+        self.prev_step_ts_ns = None
 
 
     def step_sleep(self, display_rate=False):
@@ -95,8 +95,9 @@ class Arm:
         self.prev_step_ts_ns = time.perf_counter_ns()
 
 
-    def step(self, action, mj_data):
-        obs = self.get_obs()
+    def step(self, action, mj_model, mj_data):
+        q_low, _ = mj_model.jnt_range.T
+        obs = self.get_obs(q_low=q_low)
 
         ####### Defining reward
         # Using a decaying exponential function based on the distance from the
@@ -141,6 +142,7 @@ class Arm:
 
 
     def in_bounds(self, pos_xyz):
+        assert(pos_xyz.shape == (3,))
         # convert xyz position to rpz and compare to bounds
         rho = np.linalg.norm(pos_xyz[:2])
         x, y, z = pos_xyz
@@ -150,40 +152,43 @@ class Arm:
         return np.all(pos_rpz < self.rpz_high) and np.all(pos_rpz > self.rpz_low)
 
 
-    def reset(self, model, mj_data):
+    def reset(self, mj_model, mj_data):
         #Randomization of goal point
         self.goal_rpz = self.sample_pos_rpz()
         self.load_env_fn()
-        mujoco.mj_forward(model, mj_data)
-        
-        return self.get_obs()
+        mujoco.mj_forward(mj_model, mj_data)
+
+        q_low, _ = mj_model.jnt_range.T
+        return self.get_obs(q_low=q_low)
 
     
-    def get_obs(self):
+    def get_obs(self, q_low):
+        assert(q_low.shape == (6,))
         q = self.get_pos_fn()
         dq = self.get_vel_fn()
         
         if self.enable_normalize:
             # normalize observation data
-            q_max = np.pi
-            q_new = copy.deepcopy(q) / q_max
+            q_new = (copy.deepcopy(q) - q_low) / (2*np.pi) # [0,1]
+            q_new = q_new*2-1 # [-1,1]
+            assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
+            np.clip(q_new, a_min=-1, a_max=1)
 
-            dq_max = np.pi
+            dq_max = 2*np.pi
             dq_new = copy.deepcopy(dq) / dq_max
+            assert np.all(np.abs(dq_new) <= 1), "dq_new = {}".format(dq_new)
 
-            high_rho, high_phi, high_z = self.rpz_high
-            low_rho, low_phi, low_z = self.rpz_low
+            assert(self.goal_rpz.shape == (3,))
+            assert(self.rpz_low.shape == (3,))
+            assert(self.rpz_high.shape == (3,))
 
-            rho, phi, z = self.goal_rpz
-            rho = (rho-low_rho)/(high_rho-low_rho)
-            # remember y range is negative
-            phi = -(phi-low_phi)/(high_phi-low_phi)
-            z = (z-low_z)/(high_z-low_z)
-            goal_rpz_new = np.array([rho,phi,z])
+            goal_rpz_new = self.goal_rpz.copy()
+            goal_rpz_new = (goal_rpz_new - self.rpz_low)/(self.rpz_high - self.rpz_low)
             # each normalized goal element is now within [0,1], but the other
             # observations are within [-1,1] so adjust the goal elements to be
             # within [-1,1]
             goal_rpz_new = goal_rpz_new*2-1
+            assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
 
             obs = np.concatenate([q_new, dq_new, goal_rpz_new]).ravel() #edited to return goal
             return obs

@@ -123,6 +123,7 @@ class ArmHw(gym.Env):
     def step(self, action):
         self.arm.step_sleep(display_rate=True)
         self.robot.send_action(action)
+        self.arm.step(action, mj_model=self.model, mj_data=self.data)
 
 
     def __del__(self):

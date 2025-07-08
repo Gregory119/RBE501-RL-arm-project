@@ -137,12 +137,12 @@ class ArmSimEnv(MujocoEnv):
             self.arm.step_sleep(display_rate=True)
         self.do_simulation(action, self.frame_skip)
         
-        return self.arm.step(action, self.data)
+        return self.arm.step(action, mj_model=self.model, mj_data=self.data)
 
 
     # override
     def reset_model(self):
-        return self.arm.reset(self.model, self.data)
+        return self.arm.reset(mj_model=self.model, mj_data=self.data)
 
 
     def forward_kinematics_ee(self, qpos, site_name = "gripper"):
@@ -200,6 +200,7 @@ class ArmSimEnv(MujocoEnv):
         # use a fixed joint velocity so that its guaranteed to be in
         # normalization bounds
         qvel = self.init_qvel
+        assert np.all(np.abs(qvel) <= np.pi), "qvel = {}".format(qvel)
         self.set_state(qpos, qvel)
 
 
