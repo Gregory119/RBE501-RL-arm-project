@@ -4,6 +4,7 @@ from gymnasium.spaces import Box
 from dataclasses import dataclass
 
 import copy
+import time
 
 
 def rpz_to_xyz(rpz):
@@ -20,6 +21,7 @@ class Arm:
     """
 
     def __init__(self,
+                 rate_hz: int,
                  get_pos_fn,
                  get_vel_fn,
                  load_env_fn,
@@ -39,6 +41,7 @@ class Arm:
         reward performance because future rewards in terminal states have a reward of
         zero, resulting in the ee avoiding the goal region."""
 
+        self.rate_hz = rate_hz
         self.get_pos_fn = get_pos_fn
         self.get_vel_fn = get_vel_fn
         self.load_env_fn = load_env_fn
@@ -55,11 +58,46 @@ class Arm:
             observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
         self.set_obs_space_fn(observation_space)
 
+        # workspace bounds
+        self.rpz_low = np.array([0.1143,-np.pi,0.075])
+        self.rpz_high = np.array([0.4064,0,0.25])
+
         self.goal_rpz = self.sample_pos_rpz()
 
+        self.prev_step_ts_ns = None
 
-    def step(self, action, mj_data):
-        obs = self.get_obs()
+
+    def step_sleep(self, display_rate=False):
+        """Call this within step() to sleep the required amount to meet the
+        desired step rate. This of course cannot take time away to speed up the
+        actual step rate."""
+        step_ts_ns = time.perf_counter_ns()
+        if self.prev_step_ts_ns is not None:
+            dur = (step_ts_ns - self.prev_step_ts_ns)*1e-9
+            desired_dur = 1 / self.rate_hz
+            dur_diff = desired_dur - dur
+            if dur_diff > 0:
+                time.sleep(dur_diff)
+
+        # display the measured rate
+        if display_rate and self.prev_step_ts_ns is not None:
+            step_ts_ns = time.perf_counter_ns()
+            dur = (step_ts_ns - self.prev_step_ts_ns)*1e-9
+            actual_rate = 1 / dur
+            # note that the actual rate cannot go faster the 60 Hz because
+            # that's the limit of the mujoco renderer and probably the
+            # physical monitor limit
+            print("measured rate [Hz]: {}".format(actual_rate))
+
+        # step() is only being performed at this point and a sleep might have
+        # occurred in the above logic, so update the previous step timestep
+        # accordingly
+        self.prev_step_ts_ns = time.perf_counter_ns()
+
+
+    def step(self, action, mj_model, mj_data):
+        q_low, _ = mj_model.jnt_range.T
+        obs = self.get_obs(q_low=q_low)
 
         ####### Defining reward
         # Using a decaying exponential function based on the distance from the
@@ -96,42 +134,63 @@ class Arm:
         # set limits in cylindrical coordinates
         # rho, phi, z
         rho, phi, z = self.np_random.uniform(
-            low = np.array([0.1143,-np.pi,0.075]),# lower bound
-            high = np.array([0.4064,0,0.25]), # upper bound
+            low = self.rpz_low,
+            high = self.rpz_high,
         )
 
         return np.array([rho, phi, z])
 
 
-    def reset(self, model, mj_data):
+    def in_bounds(self, pos_xyz):
+        assert(pos_xyz.shape == (3,))
+        # convert xyz position to rpz and compare to bounds
+        rho = np.linalg.norm(pos_xyz[:2])
+        x, y, z = pos_xyz
+        phi = np.atan2(y, x)
+        pos_rpz = np.array([rho, phi, z])
+
+        return np.all(pos_rpz < self.rpz_high) and np.all(pos_rpz > self.rpz_low)
+
+
+    def reset(self, mj_model, mj_data):
         #Randomization of goal point
         self.goal_rpz = self.sample_pos_rpz()
         self.load_env_fn()
-        mujoco.mj_forward(model, mj_data)
-        
-        return self.get_obs()
+        mujoco.mj_forward(mj_model, mj_data)
+
+        q_low, _ = mj_model.jnt_range.T
+        return self.get_obs(q_low=q_low)
 
     
-    def get_obs(self):
+    def get_obs(self, q_low):
+        assert(q_low.shape == (6,))
         q = self.get_pos_fn()
         dq = self.get_vel_fn()
         
         if self.enable_normalize:
             # normalize observation data
-            q_max = np.pi
-            q_norm = copy.deepcopy(q) / q_max
-            dq_max = np.pi
-            dq_norm = copy.deepcopy(dq) / dq_max
-            goal_rpz_norm = copy.deepcopy(self.goal_rpz)
-            goal_rpz_norm[0] = (goal_rpz_norm[0]-0.1143)/(0.4064-0.1143)
-            # remember y range is negative
-            goal_rpz_norm[1] = -goal_rpz_norm[1]/np.pi
-            goal_rpz_norm[2] = (goal_rpz_norm[2]-0.075)/(0.25-0.075)
+            q_new = (copy.deepcopy(q) - q_low) / (2*np.pi) # [0,1]
+            q_new = q_new*2-1 # [-1,1]
+            assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
+            np.clip(q_new, a_min=-1, a_max=1)
+
+            dq_max = 2*np.pi
+            dq_new = copy.deepcopy(dq) / dq_max
+            assert np.all(np.abs(dq_new) <= 1), "dq_new = {}".format(dq_new)
+
+            assert(self.goal_rpz.shape == (3,))
+            assert(self.rpz_low.shape == (3,))
+            assert(self.rpz_high.shape == (3,))
+
+            goal_rpz_new = self.goal_rpz.copy()
+            goal_rpz_new = (goal_rpz_new - self.rpz_low)/(self.rpz_high - self.rpz_low)
             # each normalized goal element is now within [0,1], but the other
             # observations are within [-1,1] so adjust the goal elements to be
             # within [-1,1]
-            goal_rpz_norm = goal_rpz_norm*2-1
-            obs = np.concatenate([q_norm, dq_norm, goal_rpz_norm]).ravel() #edited to return goal
+            goal_rpz_new = goal_rpz_new*2-1
+            assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
+
+            obs = np.concatenate([q_new, dq_new, goal_rpz_new]).ravel() #edited to return goal
             return obs
         else:
             return np.concatenate([q, dq, self.goal_rpz]).ravel()

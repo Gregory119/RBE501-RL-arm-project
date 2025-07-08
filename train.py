@@ -6,19 +6,18 @@ from pathlib import Path
 import os
 from typing import List
 import re
+import signal
 
 from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, CallbackList
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env.vec_monitor import VecMonitor
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.evaluation import evaluate_policy
 
 from torch.utils.tensorboard import SummaryWriter
-from stable_baselines3.common.callbacks import BaseCallback
 import gymnasium_env
-
 
 
 class LogHelper:
@@ -73,6 +72,18 @@ class TBCallback(BaseCallback):
         return True
 
 
+def sig_handler(sig, frame):
+    if sig == signal.SIGINT: # Ctrl-C
+        handle_fault()
+
+
+def handle_fault():
+    # Move the robot to a safe position. The action must be in radians.
+    if g_hw_env is not None:
+        action = np.array([0,-80,90,0,0,0])/180*np.pi
+        g_hw_env.send_action(action)
+
+
 def make_sim_env(rank: int, vis: bool = False, seed: int = 0):
     def _init():
         render_mode=None
@@ -85,16 +96,16 @@ def make_sim_env(rank: int, vis: bool = False, seed: int = 0):
     return _init
 
 
-def make_hw_env(robot, vis: bool = False):
-    render_mode = None
-    if vis:
-        render_mode = 'human'
-    env = gym.make("ArmHw-v0",render_mode=render_mode)
+def make_hw_env():
+    # this should only be called once
+    env = gym.make("ArmHw-v0")
     env.reset()
+    global g_hw_env
+    g_hw_env = env
     return env
 
 
-def main(args, robot=None):
+def main(args):
     os.makedirs(args.logdir, exist_ok=True)
 
     # make environments
@@ -104,7 +115,7 @@ def main(args, robot=None):
         num_envs = args.num_envs
     if args.hw:
         # one hardware environment
-        env_fns = [make_hw_env(vis=args.vis, robot=robot)]
+        env_fns = [make_hw_env]
     else:
         env_fns = [make_sim_env(i,vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
@@ -190,10 +201,12 @@ def main(args, robot=None):
     venv.close()
 
 
-g_robot = None
+g_hw_env = None
 
 #train
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT, sig_handler)
+
     #parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--total-steps", type=int, default=4000_000)
@@ -212,10 +225,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        # if args.hw:
-        #     g_robot
-
-        main(args, robot=g_robot)
+        main(args)
     except Exception as e:
-        # todo: if running hardware environment, then reset to safe position
+        handle_fault()
         raise
