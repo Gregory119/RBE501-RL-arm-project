@@ -21,6 +21,7 @@ import gymnasium_env
 
 
 
+
 class LogHelper:
     def __init__(self, logger):
         self.first_step = True
@@ -72,15 +73,17 @@ class TBCallback(BaseCallback):
         self.log_helper.on_step(num_envs=self.locals["env"].num_envs, dones=self.locals["dones"], rewards=self.locals["rewards"], num_timesteps=self.num_timesteps)
         return True
 
+LOW, HIGH = 0.1, 10 #upper and lower bound for mass scaling
 
 #start arm env
-def make_env(rank: int, vis: bool = False, seed: int = 0):
+def make_env(shared_scale: float, rank: int, vis: bool = False, seed: int = 0):
     def _init():
-        render_mode=None
-        if vis:
-            render_mode='human'
-
-        env = gym.make("Arm-v0",render_mode=render_mode)
+        render_mode = "human" if vis else None
+        env = gym.make(
+            "Arm-v0",
+            render_mode=render_mode,
+            shared_mass_scale=shared_scale,   # same in every parallel env
+        )
         env.reset(seed=seed + rank)
         return env
     return _init
@@ -89,6 +92,7 @@ def make_env(rank: int, vis: bool = False, seed: int = 0):
 
 #train
 if __name__ == "__main__":
+
     #parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--total-steps", type=int, default=4000_000)
@@ -104,14 +108,16 @@ if __name__ == "__main__":
     eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
 
     args = parser.parse_args()
-
+    rng = np.random.default_rng()
+    SHARED_SCALE = float(rng.uniform(0.1, 10.0))
+    print(f"Mass scale for this run: {SHARED_SCALE:.4f}")
     os.makedirs(args.logdir, exist_ok=True)
 
     # parallel envs
     num_envs = 1
     if hasattr(args,"num_envs"):
         num_envs = args.num_envs
-    env_fns = [make_env(i,vis=args.vis) for i in range(num_envs)]
+    env_fns = [make_env(SHARED_SCALE, rank= i,vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
 
     device = "auto"

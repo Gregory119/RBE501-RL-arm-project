@@ -45,6 +45,10 @@ class ArmEnv(MujocoEnv):
         xml_file: str | None = None,
         frame_skip: int = 2,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
+        mass_scale_range: tuple[float, float] = (1.0, 1.0),
+        mass_scale_seed: int | None = None,
+        shared_mass_scale: float | None = None,
+        mass_scale = None,
         max_episode_steps=500,
         **kwargs,
     ):
@@ -62,14 +66,17 @@ class ArmEnv(MujocoEnv):
         observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
 
         self.goal = np.array([0.5,0.1,0.1])
-
+        self.mass_scale_range = mass_scale_range
+        self.mass_scale_seed  = mass_scale_seed
+        self.shared_mass_scale = float(shared_mass_scale) if shared_mass_scale is not None else None
         self.load_data = self.LoadData(xml_file=xml_file,
                                        frame_skip=frame_skip,
                                        observation_space=observation_space,
                                        default_camera_config=default_camera_config,
+                                       
                                        kwargs=kwargs)
+        self._mass_scale = None 
         self._load_env()
-
         self.max_episode_steps = max_episode_steps
         self.steps = 0
         self.reset_model()
@@ -83,6 +90,33 @@ class ArmEnv(MujocoEnv):
             ],
             "render_fps": int(np.round(1.0 / self.dt)),
         }
+
+
+    def _generate_mass_scales(self):
+        low, high = self.mass_scale_range
+        rng = self.np_random
+        self._mass_scales = rng.uniform(low, high, size=self.model.nbody)
+        self._mass_scales[0] = 1.0          #fix world body
+
+    def _apply_mass_scales(self, model):
+        if self._mass_scale is None:
+            if self.shared_mass_scale is not None:
+                
+                self._mass_scale = self.shared_mass_scale
+                print(f" Link mass global scale (shared): {self._mass_scale:.4f}")
+            else:
+                # scalar
+                low, high = self.mass_scale_range
+                rng = (
+                    np.random.default_rng(self.mass_scale_seed)
+                    if self.mass_scale_seed is not None else self.np_random
+                )
+                self._mass_scale = float(rng.uniform(low, high))
+                print(f"Link mass global scale: {self._mass_scale:.4f}")
+
+        # apply the scalar to every arm link
+        model.body_mass[1:]    *= self._mass_scale
+        model.body_inertia[1:] *= self._mass_scale
 
 
     def _load_env(self):
@@ -257,5 +291,6 @@ class ArmEnv(MujocoEnv):
         model = spec.compile()
         model.vis.global_.offwidth = self.width
         model.vis.global_.offheight = self.height
+        self._apply_mass_scales(model)
         data = mujoco.MjData(model)
         return model, data
