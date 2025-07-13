@@ -20,6 +20,7 @@ from torch.utils.tensorboard import SummaryWriter
 import gymnasium_env
 
 
+
 class LogHelper:
     def __init__(self, logger):
         self.first_step = True
@@ -71,6 +72,8 @@ class TBCallback(BaseCallback):
         self.log_helper.on_step(num_envs=self.locals["env"].num_envs, dones=self.locals["dones"], rewards=self.locals["rewards"], num_timesteps=self.num_timesteps)
         return True
 
+LOW, HIGH = 0.1, 10 #upper and lower bound for mass scaling
+
 
 def sig_handler(sig, frame):
     if sig == signal.SIGINT: # Ctrl-C
@@ -83,14 +86,14 @@ def handle_fault():
         action = np.array([0,-80,90,0,0,0])/180*np.pi
         g_hw_env.send_action(action)
 
-
-def make_sim_env(rank: int, vis: bool = False, seed: int = 0):
+#start arm env
+def make_sim_env(shared_scale:float, rank: int, vis: bool = False, seed: int = 0):
     def _init():
         render_mode=None
         if vis:
             render_mode='human'
 
-        env = gym.make("ArmSim-v0",render_mode=render_mode)
+        env = gym.make("ArmSim-v0",render_mode=render_mode,shared_mass_scale=shared_scale)
         env.reset(seed=seed + rank)
         return env
     return _init
@@ -117,7 +120,7 @@ def main(args):
         # one hardware environment
         env_fns = [make_hw_env]
     else:
-        env_fns = [make_sim_env(i,vis=args.vis) for i in range(num_envs)]
+        env_fns = [make_sim_env(SHARED_SCALE,i,vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
 
     device = "auto"
@@ -205,7 +208,6 @@ g_hw_env = None
 
 #train
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, sig_handler)
 
     #parse arguments
     parser = argparse.ArgumentParser()
@@ -214,8 +216,7 @@ if __name__ == "__main__":
     parser.add_argument("--logdir", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
     parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
-    parser.add_argument("--hw", help="use hardware environment", action="store_true")
-
+    parser.add_argument("--scale-masses", action="store_true")
     subparsers = parser.add_subparsers(dest="mode")
     train_parser = subparsers.add_parser("train")
     train_parser.add_argument("--num-envs", type=int, default=8)
@@ -223,6 +224,15 @@ if __name__ == "__main__":
     eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
 
     args = parser.parse_args()
+    rng = np.random.default_rng()
+    #SHARED_SCALE = float(rng.uniform(0.1, 10.0))
+
+    #scale masses if argument is passed. If not, masses are scaled by 1(no change)
+    if args.scale_masses:
+        SHARED_SCALE = float(rng.uniform(LOW, HIGH))
+    else:
+        SHARED_SCALE = 1.0 
+    print(f"Mass scale for this run: {SHARED_SCALE:.4f}")
 
     try:
         main(args)
