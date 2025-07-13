@@ -15,6 +15,16 @@ def rpz_to_xyz(rpz):
     return np.array([x,y,z])
 
 
+def xyz_to_rpz(xyz):
+    assert(xyz.shape == (3,))
+    # convert xyz position to rpz and compare to bounds
+    rho = np.linalg.norm(xyz[:2])
+    x, y, z = xyz
+    phi = np.atan2(y, x)
+    pos_rpz = np.array([rho, phi, z])
+    return pos_rpz
+
+
 class Arm:
     """
     Contains common arm environment functionality.
@@ -31,6 +41,10 @@ class Arm:
                  np_random,
                  enable_normalize = True,
                  enable_terminate = False,
+                 rpz_low = None,
+                 rpz_high = None,
+                 assert_obs = True,
+                 deterministic_goal = False,
                  **kwargs):
         """Constructor
         
@@ -59,8 +73,17 @@ class Arm:
         self.set_obs_space_fn(observation_space)
 
         # workspace bounds
-        self.rpz_low = np.array([0.1143,-np.pi,0.075])
-        self.rpz_high = np.array([0.4064,0,0.25])
+        self.rpz_low = np.array([0.0254*4.5,-np.pi,0.0254*3])
+        self.rpz_high = np.array([0.0254*16.25,0,0.0254*10])
+        if rpz_low is not None:
+            self.rpz_low = np.array(rpz_low)
+            assert self.rpz_low.shape == (3,)
+        if rpz_high is not None:
+            self.rpz_high = np.array(rpz_high)
+            assert self.rpz_high.shape == (3,)
+
+        self.assert_obs = assert_obs
+        self.deterministic_goal = deterministic_goal
 
         self.goal_rpz = self.sample_pos_rpz()
 
@@ -111,8 +134,23 @@ class Arm:
 
         reward = np.exp(-10*dist)
 
-        # truncation by timeout is set externally
+        # if ee too close to ground, then penalize
+        assert self.goal_rpz[-1] >= self.rpz_low[-1], "goal: {}, rpz_low: {}".format(self.goal, self.rpz_low)
+        if xyz_to_rpz(ee_pos)[-1] < self.rpz_low[-1]:
+            reward -= 10
+
+        # If holding the action constant would cause the robot to go into the
+        # ground, then penalize. This should reduce the chance of an action
+        # causing the physical robot to hit the table.
+        ee_pos_hold_action = self.forward_kinematics_ee(qpos=action, mj_model=mj_model, mj_data=mj_data)
+        ee_pos_hold_action_rpz = xyz_to_rpz(ee_pos_hold_action)
+        if ee_pos_hold_action_rpz[-1] < self.rpz_low[-1]:
+            reward -= 1
+
+        # side note: truncation by timeout is set externally
         truncated = self.should_truncate_fn()
+        # if truncated:
+        #     print("truncated")
         # allow termination in the goal region, if enabled, but reward
         # performance is better when this is disabled
         goal_radius = 0.02
@@ -129,27 +167,47 @@ class Arm:
 
 
     def sample_pos_rpz(self):
-        # the robot is facing in the -y direction
+        if not self.deterministic_goal:
+            # the robot is facing in the -y direction
 
-        # set limits in cylindrical coordinates
-        # rho, phi, z
-        rho, phi, z = self.np_random.uniform(
-            low = self.rpz_low,
-            high = self.rpz_high,
-        )
+            # set limits in cylindrical coordinates
+            # rho, phi, z
+            rho, phi, z = self.np_random.uniform(
+                low = self.rpz_low,
+                high = self.rpz_high,
+                )
 
-        return np.array([rho, phi, z])
+            return np.array([rho, phi, z])
+
+        rho = 0.0254*16
+        phi = -np.pi
+        z = 0.0254*10
+        return np.arary([rho, phi, z])
 
 
     def in_bounds(self, pos_xyz):
-        assert(pos_xyz.shape == (3,))
-        # convert xyz position to rpz and compare to bounds
-        rho = np.linalg.norm(pos_xyz[:2])
-        x, y, z = pos_xyz
-        phi = np.atan2(y, x)
-        pos_rpz = np.array([rho, phi, z])
+        pos_rpz = xyz_to_rpz(pos_xyz)
 
-        return np.all(pos_rpz < self.rpz_high) and np.all(pos_rpz > self.rpz_low)
+        ret = np.all(pos_rpz < self.rpz_high) and np.all(pos_rpz > self.rpz_low)
+        # if not ret:
+        #     print("arm out of bounds")
+        return ret
+
+
+    def forward_kinematics_ee(self, qpos, mj_model, mj_data, site_name = "gripper"):
+        # store the current state
+        q_orig = mj_data.qpos.copy()
+
+        # calculate FK
+        mj_data.qpos[:] = qpos
+        mujoco.mj_kinematics(mj_model, mj_data)
+        ee_pos = mj_data.site("gripper").xpos.copy()
+
+        # restore state
+        mj_data.qpos[:] = q_orig
+        mujoco.mj_kinematics(mj_model, mj_data)
+
+        return ee_pos
 
 
     def reset(self, mj_model, mj_data):
@@ -171,16 +229,20 @@ class Arm:
             # normalize observation data
             q_new = (copy.deepcopy(q) - q_low) / (2*np.pi) # [0,1]
             q_new = q_new*2-1 # [-1,1]
-            assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
+            if self.assert_obs:
+                assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
             np.clip(q_new, a_min=-1, a_max=1)
 
-            dq_max = 2*np.pi
+            dq_max = 2.1*np.pi
             dq_new = copy.deepcopy(dq) / dq_max
-            assert np.all(np.abs(dq_new) <= 1), "dq_new = {}".format(dq_new)
+            if self.assert_obs:
+                assert np.all(np.abs(dq_new) <= 1.05), "dq_new = {}".format(dq_new)
+            np.clip(dq_new, a_min=-1, a_max=1)
 
-            assert(self.goal_rpz.shape == (3,))
-            assert(self.rpz_low.shape == (3,))
-            assert(self.rpz_high.shape == (3,))
+            if self.assert_obs:
+                assert(self.goal_rpz.shape == (3,))
+                assert(self.rpz_low.shape == (3,))
+                assert(self.rpz_high.shape == (3,))
 
             goal_rpz_new = self.goal_rpz.copy()
             goal_rpz_new = (goal_rpz_new - self.rpz_low)/(self.rpz_high - self.rpz_low)
@@ -188,7 +250,8 @@ class Arm:
             # observations are within [-1,1] so adjust the goal elements to be
             # within [-1,1]
             goal_rpz_new = goal_rpz_new*2-1
-            assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
+            if self.assert_obs:
+                assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
 
             obs = np.concatenate([q_new, dq_new, goal_rpz_new]).ravel() #edited to return goal
             return obs

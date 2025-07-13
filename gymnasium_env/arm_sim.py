@@ -41,7 +41,7 @@ class ArmSimEnv(MujocoEnv):
     def __init__(
         self,
         xml_file: str | None = None,
-        rate_hz: int = 250,
+        rate_hz: int = 50,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
         enable_normalize = True,
         enable_terminate = False,
@@ -122,6 +122,7 @@ class ArmSimEnv(MujocoEnv):
             default_camera_config=self.load_data.default_camera_config,
             **self.load_data.kwargs,
         )
+
         # setting the arm state must be done after loading the environment,
         # otherwise it will have no effect
         self._set_rand_arm_state()
@@ -144,22 +145,6 @@ class ArmSimEnv(MujocoEnv):
         return self.arm.reset(mj_model=self.model, mj_data=self.data)
 
 
-    def forward_kinematics_ee(self, qpos, site_name = "gripper"):
-        # store the current state
-        q_init = self.data.qpos.copy()
-
-        # calculate FK
-        self.data.qpos[:] = qpos
-        mujoco.mj_kinematics(self.model, self.data)
-        ee_pos = self.data.site("gripper").xpos.copy()
-
-        # restore state
-        self.data.qpos[:] = q_init
-        mujoco.mj_kinematics(self.model, self.data)
-
-        return ee_pos
-
-
     def inverse_kinematics(self, target_xyz, q_init= None, max_iter= 200):
         if q_init is None:
             q_init = self.init_qpos.copy()
@@ -169,7 +154,7 @@ class ArmSimEnv(MujocoEnv):
 
         # nested error function for the solver
         def error(q):
-            return self.forward_kinematics_ee(q) - target_xyz
+            return self.arm.forward_kinematics_ee(q, mj_model=self.model, mj_data=self.data) - target_xyz
 
         # numerical IK solver
         sol = least_squares(
@@ -225,7 +210,7 @@ class ArmSimEnv(MujocoEnv):
             pos=rpz_to_xyz(self.arm.goal_rpz),
             quat=[0, 1, 0, 0],
         )
-        
+
         # compile model and create data
         model = spec.compile()
         model.vis.global_.offwidth = self.width

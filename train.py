@@ -209,7 +209,7 @@ if __name__ == "__main__":
 
     #parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--total-steps", type=int, default=4000_000)
+    parser.add_argument("--total-steps", type=int, default=8000_000)
     parser.add_argument("--num-checkpoints", type=int, default=10)
     parser.add_argument("--logdir", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
