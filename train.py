@@ -6,19 +6,18 @@ from pathlib import Path
 import os
 from typing import List
 import re
+import signal
 
 from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, CallbackList
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env.vec_monitor import VecMonitor
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.evaluation import evaluate_policy
 
 from torch.utils.tensorboard import SummaryWriter
-from stable_baselines3.common.callbacks import BaseCallback
 import gymnasium_env
-
 
 
 
@@ -75,55 +74,53 @@ class TBCallback(BaseCallback):
 
 LOW, HIGH = 0.1, 10 #upper and lower bound for mass scaling
 
+
+def sig_handler(sig, frame):
+    if sig == signal.SIGINT: # Ctrl-C
+        handle_fault()
+
+
+def handle_fault():
+    # Move the robot to a safe position. The action must be in radians.
+    if g_hw_env is not None:
+        action = np.array([0,-80,90,0,0,0])/180*np.pi
+        g_hw_env.send_action(action)
+
 #start arm env
-def make_env(shared_scale: float, rank: int, vis: bool = False, seed: int = 0):
+def make_sim_env(shared_scale:float, rank: int, vis: bool = False, seed: int = 0):
     def _init():
-        render_mode = "human" if vis else None
-        env = gym.make(
-            "Arm-v0",
-            render_mode=render_mode,
-            shared_mass_scale=shared_scale,   # same in every parallel env
-        )
+        render_mode=None
+        if vis:
+            render_mode='human'
+
+        env = gym.make("ArmSim-v0",render_mode=render_mode,shared_mass_scale=shared_scale)
         env.reset(seed=seed + rank)
         return env
     return _init
 
 
+def make_hw_env():
+    # this should only be called once
+    env = gym.make("ArmHw-v0")
+    env.reset()
+    global g_hw_env
+    g_hw_env = env
+    return env
 
-#train
-if __name__ == "__main__":
 
-    #parse arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--total-steps", type=int, default=4000_000)
-    parser.add_argument("--num-checkpoints", type=int, default=10)
-    parser.add_argument("--logdir", type=str, default="logs/")
-    parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
-    parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
-    parser.add_argument("--scale-masses", action="store_true")
-    subparsers = parser.add_subparsers(dest="mode")
-    train_parser = subparsers.add_parser("train")
-    train_parser.add_argument("--num-envs", type=int, default=8)
-    eval_parser = subparsers.add_parser("eval")
-    eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
-
-    args = parser.parse_args()
-    rng = np.random.default_rng()
-    #SHARED_SCALE = float(rng.uniform(0.1, 10.0))
-
-    #scale masses if argument is passed. If not, masses are scaled by 1(no change)
-    if args.scale_masses:
-        SHARED_SCALE = float(rng.uniform(LOW, HIGH))
-    else:
-        SHARED_SCALE = 1.0 
-    print(f"Mass scale for this run: {SHARED_SCALE:.4f}")
+def main(args):
     os.makedirs(args.logdir, exist_ok=True)
 
-    # parallel envs
+    # make environments
     num_envs = 1
-    if hasattr(args,"num_envs"):
+    if hasattr(args,"num_envs") and not args.hw:
+        # parallel simulation environment(s)
         num_envs = args.num_envs
-    env_fns = [make_env(SHARED_SCALE, rank= i,vis=args.vis) for i in range(num_envs)]
+    if args.hw:
+        # one hardware environment
+        env_fns = [make_hw_env]
+    else:
+        env_fns = [make_sim_env(SHARED_SCALE,i,vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
 
     device = "auto"
@@ -136,7 +133,7 @@ if __name__ == "__main__":
     # use a regular expression to extract the run number from the existing folder name
     run_num_re = re.compile(r".*run_([0-9]+)")
         
-    # Create and a logger for training and evaluation. It's possible to use a
+    # Create a logger for training and evaluation. It's possible to use a
     # default logger for training, but not for evaluation.
     folder_start = alg.__name__ + '_'
     log_dir_base = Path(os.path.dirname(__file__), args.logdir, args.mode)
@@ -205,3 +202,40 @@ if __name__ == "__main__":
 
         print("Evaluation Done")
     venv.close()
+
+
+g_hw_env = None
+
+#train
+if __name__ == "__main__":
+
+    #parse arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--total-steps", type=int, default=4000_000)
+    parser.add_argument("--num-checkpoints", type=int, default=10)
+    parser.add_argument("--logdir", type=str, default="logs/")
+    parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
+    parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
+    parser.add_argument("--scale-masses", action="store_true")
+    subparsers = parser.add_subparsers(dest="mode")
+    train_parser = subparsers.add_parser("train")
+    train_parser.add_argument("--num-envs", type=int, default=8)
+    eval_parser = subparsers.add_parser("eval")
+    eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
+
+    args = parser.parse_args()
+    rng = np.random.default_rng()
+    #SHARED_SCALE = float(rng.uniform(0.1, 10.0))
+
+    #scale masses if argument is passed. If not, masses are scaled by 1(no change)
+    if args.scale_masses:
+        SHARED_SCALE = float(rng.uniform(LOW, HIGH))
+    else:
+        SHARED_SCALE = 1.0 
+    print(f"Mass scale for this run: {SHARED_SCALE:.4f}")
+
+    try:
+        main(args)
+    except Exception as e:
+        handle_fault()
+        raise
