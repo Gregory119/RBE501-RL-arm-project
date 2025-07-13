@@ -1,10 +1,10 @@
 <?xml version="1.0" ?>
 <!-- Generated using onshape-to-robot -->
 <!-- Onshape https://cad.onshape.com/documents/7715cc284bb430fe6dab4ffd/w/4fd0791b683777b02f8d975a/e/826c553ede3b7592eb9ca800 -->
-<mujoco model="so101_new_calib">
-  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+<mujoco model="so101">
+  <compiler angle="radian" meshdir="SO-ARM100/Simulation/SO101/assets" autolimits="true"/>
   <default>
-    <default class="so101_new_calib">
+    <default class="so101">
       <joint frictionloss="0.1" armature="0.005"/>
       <position kp="50" dampratio="1"/>
       <default class="visual">
@@ -29,7 +29,7 @@
   </default>
   <worldbody>
     <!-- Link base -->
-    <body name="base" pos="0 0 0" quat="1 0 0 0" childclass="so101_new_calib">
+    <body name="base" pos="0 0 0" quat="1 0 0 0" childclass="so101">
       <inertial pos="0.020739 0.00204287 0.065966" mass="0.147" fullinertia="0.000136117 0.000114686 0.000130364 4.59787e-07 9.75275e-08 -4.97151e-06"/>
       <!-- Part base_motor_holder_so101_v1 -->
       <geom type="mesh" class="visual" pos="0.0206915 0.0221255 0.0300817" quat="0.707107 0.707107 7.85046e-16 8.68107e-16" mesh="base_motor_holder_so101_v1" material="base_motor_holder_so101_v1_material"/>

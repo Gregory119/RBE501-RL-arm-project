@@ -59,8 +59,7 @@ class ArmSimEnv(MujocoEnv):
         """
         if xml_file is None:
             xml_file = path.join(
-                path.dirname(__file__),
-                "SO-ARM100", "Simulation", "SO101", "scene.xml"
+                path.dirname(__file__), "scene.xml"
             )
         if not path.exists(xml_file):
             raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
