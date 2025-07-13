@@ -100,7 +100,7 @@ if __name__ == "__main__":
     parser.add_argument("--logdir", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
     parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
-
+    parser.add_argument("--scale-masses", action="store_true")
     subparsers = parser.add_subparsers(dest="mode")
     train_parser = subparsers.add_parser("train")
     train_parser.add_argument("--num-envs", type=int, default=8)
@@ -109,7 +109,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     rng = np.random.default_rng()
-    SHARED_SCALE = float(rng.uniform(0.1, 10.0))
+    #SHARED_SCALE = float(rng.uniform(0.1, 10.0))
+
+    #scale masses if argument is passed. If not, masses are scaled by 1(no change)
+    if args.scale_masses:
+        SHARED_SCALE = float(rng.uniform(LOW, HIGH))
+    else:
+        SHARED_SCALE = 1.0 
     print(f"Mass scale for this run: {SHARED_SCALE:.4f}")
     os.makedirs(args.logdir, exist_ok=True)
 
