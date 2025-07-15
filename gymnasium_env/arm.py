@@ -33,7 +33,6 @@ class Arm:
     def __init__(self,
                  rate_hz: int,
                  get_pos_fn,
-                 get_vel_fn,
                  load_env_fn,
                  should_truncate_fn,
                  vis_fn,
@@ -57,7 +56,6 @@ class Arm:
 
         self.rate_hz = rate_hz
         self.get_pos_fn = get_pos_fn
-        self.get_vel_fn = get_vel_fn
         self.load_env_fn = load_env_fn
         self.should_truncate_fn = should_truncate_fn
         self.vis_fn = vis_fn
@@ -67,9 +65,9 @@ class Arm:
         self.enable_normalize = enable_normalize
         self.enable_terminate = enable_terminate
         if self.enable_normalize:
-            observation_space = Box(low=-1, high=1, shape=(15,), dtype=np.float64)
+            observation_space = Box(low=-1, high=1, shape=(9,), dtype=np.float64)
         else:
-            observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
+            observation_space = Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float64)
         self.set_obs_space_fn(observation_space)
 
         # workspace bounds
@@ -118,7 +116,24 @@ class Arm:
         self.prev_step_ts_ns = time.perf_counter_ns()
 
 
+    def action_scale_to_pos(self, action_scale, mj_model, qpos):
+        # Clip the action by limiting the desired relative change in joint
+        # positions. This must be called before the action is applied
+
+        q_low, q_high = mj_model.jnt_range.T
+        assert(np.all(q_high > q_low))
+
+        # clip upper and lower bounds within [-pi,pi] so that the hardware
+        # protocol doesn't attempt to send a negative value and fail
+        q_low = np.clip(q_low, a_min=np.full(shape=q_low.shape, fill_value=-np.pi), a_max=np.full(shape=q_low.shape, fill_value=np.pi))
+        q_high = np.clip(q_high, a_min=np.full(shape=q_high.shape, fill_value=-np.pi), a_max=np.full(shape=q_high.shape, fill_value=np.pi))
+
+        max_rel = (q_high - q_low)*0.05
+        return qpos + action_scale*max_rel
+
+
     def step(self, action, mj_model, mj_data):
+        #print("arm.step(): action = {}".format(action))
         q_low, _ = mj_model.jnt_range.T
         obs = self.get_obs(q_low=q_low)
 
@@ -134,21 +149,21 @@ class Arm:
 
         reward = np.exp(-10*dist)
 
-        # if ee too close to ground, then penalize
-        assert self.goal_rpz[-1] >= self.rpz_low[-1], "goal: {}, rpz_low: {}".format(self.goal, self.rpz_low)
-        if xyz_to_rpz(ee_pos)[-1] < self.rpz_low[-1]:
-            reward -= 10
+        # # if ee too close to ground, then penalize
+        # assert self.goal_rpz[-1] >= self.rpz_low[-1], "goal: {}, rpz_low: {}".format(self.goal, self.rpz_low)
+        # if xyz_to_rpz(ee_pos)[-1] < self.rpz_low[-1]:
+        #     reward -= 10
 
-        # If holding the action constant would cause the robot to go into the
-        # ground, then penalize. This should reduce the chance of an action
-        # causing the physical robot to hit the table.
-        ee_pos_hold_action = self.forward_kinematics_ee(qpos=action, mj_model=mj_model, mj_data=mj_data)
-        ee_pos_hold_action_rpz = xyz_to_rpz(ee_pos_hold_action)
-        if ee_pos_hold_action_rpz[-1] < self.rpz_low[-1]:
-            reward -= 1
+        # # If holding the action constant would cause the robot to go into the
+        # # ground, then penalize. This should reduce the chance of an action
+        # # causing the physical robot to hit the table.
+        # ee_pos_hold_action = self.forward_kinematics_ee(qpos=action, mj_model=mj_model, mj_data=mj_data)
+        # ee_pos_hold_action_rpz = xyz_to_rpz(ee_pos_hold_action)
+        # if ee_pos_hold_action_rpz[-1] < self.rpz_low[-1]:
+        #     reward -= 1
 
         # side note: truncation by timeout is set externally
-        truncated = self.should_truncate_fn()
+        truncated = self.should_truncate_fn(q=obs[:6])
         # if truncated:
         #     print("truncated")
         # allow termination in the goal region, if enabled, but reward
@@ -180,9 +195,9 @@ class Arm:
             return np.array([rho, phi, z])
 
         rho = 0.0254*16
-        phi = -np.pi
+        phi = -np.pi/2
         z = 0.0254*10
-        return np.arary([rho, phi, z])
+        return np.array([rho, phi, z])
 
 
     def in_bounds(self, pos_xyz):
@@ -223,7 +238,6 @@ class Arm:
     def get_obs(self, q_low):
         assert(q_low.shape == (6,))
         q = self.get_pos_fn()
-        dq = self.get_vel_fn()
         
         if self.enable_normalize:
             # normalize observation data
@@ -232,12 +246,6 @@ class Arm:
             if self.assert_obs:
                 assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
             np.clip(q_new, a_min=-1, a_max=1)
-
-            dq_max = 2.1*np.pi
-            dq_new = copy.deepcopy(dq) / dq_max
-            if self.assert_obs:
-                assert np.all(np.abs(dq_new) <= 1.05), "dq_new = {}".format(dq_new)
-            np.clip(dq_new, a_min=-1, a_max=1)
 
             if self.assert_obs:
                 assert(self.goal_rpz.shape == (3,))
@@ -253,7 +261,7 @@ class Arm:
             if self.assert_obs:
                 assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
 
-            obs = np.concatenate([q_new, dq_new, goal_rpz_new]).ravel() #edited to return goal
+            obs = np.concatenate([q_new, goal_rpz_new]).ravel()
             return obs
         else:
             return np.concatenate([q, dq, self.goal_rpz]).ravel()

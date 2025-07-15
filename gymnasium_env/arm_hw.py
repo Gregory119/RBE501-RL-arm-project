@@ -51,9 +51,8 @@ class ArmHwEnv(gym.Env):
         self.data = mujoco.MjData(self.model)
 
         get_pos_fn = self.read_pos
-        get_vel_fn = self.read_vel
         load_env_fn = lambda: self.load_env()
-        should_truncate_fn = lambda: not self.in_bounds()
+        should_truncate_fn = lambda q: not self.in_bounds(q)
         visualize = lambda: None
 
         self.observation_space = None
@@ -62,7 +61,6 @@ class ArmHwEnv(gym.Env):
 
         self.arm = Arm(rate_hz=rate_hz,
                        get_pos_fn=get_pos_fn,
-                       get_vel_fn=get_vel_fn,
                        load_env_fn=load_env_fn,
                        should_truncate_fn=should_truncate_fn,
                        vis_fn=visualize,
@@ -75,10 +73,8 @@ class ArmHwEnv(gym.Env):
                        assert_obs=False,
                        deterministic_goal=True)
 
-        # Set the action space (copied from mujoco environment).
-        bounds = self.model.actuator_ctrlrange.copy().astype(np.float32)
-        low, high = bounds.T
-        self.action_space = Box(low=low, high=high, dtype=np.float32)
+        # Set the action space to scale relative position
+        self.action_space = Box(low=-1, high=1, shape=(6,), dtype=np.float64)
 
         self.read_pos_cnt = 0
         self.read_vel_cnt = 0
@@ -92,7 +88,7 @@ class ArmHwEnv(gym.Env):
                 q_dict = self.robot.bus.sync_read("Present_Position")
                 q_deg = np.array([p for _,p in q_dict.items()])
                 q = q_deg / 180 * np.pi
-                print("{} read position: {}".format(self.read_pos_cnt, q))
+                print("{} read position[rad]: {}, position [deg]: {}".format(self.read_pos_cnt, q, q_deg))
                 return q
             except BaseException:
                 if not failed_once:
@@ -116,9 +112,8 @@ class ArmHwEnv(gym.Env):
                 failed_once = True
 
 
-    def in_bounds(self):
+    def in_bounds(self, q):
         # just make sure that the robot doesn't go into the table so only check the z
-        q = self.read_pos()
         self.data.qpos[:] = q
         mujoco.mj_kinematics(self.model,self.data)
         ee_pos = self.data.site("gripper").xpos
@@ -127,12 +122,12 @@ class ArmHwEnv(gym.Env):
 
 
     def send_action(self, action):
-        #print("send_action(), action = {}".format(action))
+        print("send_action(), action = {}".format(action))
         np_action = np.array(action) / np.pi * 180
         if not self.robot.is_connected:
             return
         keys = ['shoulder_pan.pos', 'shoulder_lift.pos', 'elbow_flex.pos', 'wrist_flex.pos', 'wrist_roll.pos', 'gripper.pos']
-        #print("send_action(), np_action = {}".format(np_action))
+        print("send_action(), np_action = {}".format(np_action))
         # the unit of each action element is radian so convert to degree
         self.robot.send_action(dict(zip(keys, np_action)))
 
@@ -174,12 +169,17 @@ class ArmHwEnv(gym.Env):
             time.sleep(1 / self.arm.rate_hz)
 
 
-    def step(self, action):
+    def step(self, action_scale):
         # This needs to replicate how the simulation environment works, which
-        # first steps the simulation and then sends the action. On hardware this
-        # is the same as first sleeping and then sending the action.
-        self.arm.step_sleep(display_rate=True)
+        # first applies/sends the action and then steps the simulation (sleep on hardware).
+        action = self.arm.action_scale_to_pos(action_scale,
+                                              mj_model=self.model,
+                                              qpos=self.read_pos())
+
         self.send_action(action)
+        self.arm.step_sleep(display_rate=True)
+
+        # this just calculates reward, gets observation etc
         return self.arm.step(action, mj_model=self.model, mj_data=self.data)
 
 

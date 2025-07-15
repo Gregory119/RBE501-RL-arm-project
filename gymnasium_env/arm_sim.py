@@ -67,9 +67,8 @@ class ArmSimEnv(MujocoEnv):
         # construct the arm class that has common arm environment functionality
         
         get_pos_fn = lambda: self.data.qpos
-        get_vel_fn = lambda: self.data.qvel
         load_env_fn = lambda: self.load_env()
-        should_truncate_fn = lambda: False
+        should_truncate_fn = lambda q: False
         def visualize():
             if self.render_mode == "human":
                 self.render()
@@ -85,14 +84,14 @@ class ArmSimEnv(MujocoEnv):
             
         self.arm = Arm(rate_hz=rate_hz,
                        get_pos_fn=get_pos_fn,
-                       get_vel_fn=get_vel_fn,
                        load_env_fn=load_env_fn,
                        should_truncate_fn=should_truncate_fn,
                        vis_fn=visualize,
                        set_obs_space_fn=set_obs_space,
                        np_random=self.np_random,
                        enable_normalize=enable_normalize,
-                       enable_terminate=enable_terminate)
+                       enable_terminate=enable_terminate,
+                       deterministic_goal=False)
 
         # The number of skip frames specifies how many mujoco timesteps to
         # simulate per call to step(). step() should be called at a simulation
@@ -109,6 +108,9 @@ class ArmSimEnv(MujocoEnv):
                                        kwargs=kwargs)
 
         self.load_env()
+
+        # overwrite action space to use relative position scale
+        self.action_space = Box(low=-1, high=1, shape=(6,), dtype=np.float64)
 
 
     def load_env(self):
@@ -128,7 +130,9 @@ class ArmSimEnv(MujocoEnv):
         self._set_rand_arm_state()
 
 
-    def step(self, action):
+    def step(self, action_scale):
+        action = self.arm.action_scale_to_pos(action_scale, mj_model=self.model, qpos=self.data.qpos)
+
         # If rendering, ensure that step is not called faster than the desired
         # rate. This is not needed when not rendering because the simulation is
         # stepped by the appropriate number of skip frames, so step() should be
