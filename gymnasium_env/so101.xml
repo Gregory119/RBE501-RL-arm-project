@@ -20,7 +20,9 @@
     <default class="sts3215">
       <geom contype="0" conaffinity="0"/>
       <joint damping="0.60" frictionloss="0.052" armature="0.028"/>
-      <position kp="12.0" kv="32.0" forcerange="-3.35 3.35"/>
+      <!-- See the "calc_actuator_model.py" script for how these parameters are
+           calculated. -->
+      <position kp="748.66" kv="2.731" forcerange="-2.94 2.94"/>
     </default>
     <default class="backlash">
       <!-- +/- 0.5° of backlash -->
