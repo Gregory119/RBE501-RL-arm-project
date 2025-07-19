@@ -41,7 +41,7 @@ class ArmSimEnv(MujocoEnv):
     def __init__(
         self,
         xml_file: str | None = None,
-        rate_hz: int = 250,
+        rate_hz: int = 50,
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
         enable_normalize = True,
         enable_terminate = False,
@@ -60,8 +60,7 @@ class ArmSimEnv(MujocoEnv):
         """
         if xml_file is None:
             xml_file = path.join(
-                path.dirname(__file__),
-                "SO-ARM100", "Simulation", "SO101", "scene.xml"
+                path.dirname(__file__), "scene.xml"
             )
         if not path.exists(xml_file):
             raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
@@ -69,9 +68,8 @@ class ArmSimEnv(MujocoEnv):
         # construct the arm class that has common arm environment functionality
         
         get_pos_fn = lambda: self.data.qpos
-        get_vel_fn = lambda: self.data.qvel
         load_env_fn = lambda: self.load_env()
-        should_truncate_fn = lambda: False
+        should_truncate_fn = lambda q: False
         def visualize():
             if self.render_mode == "human":
                 self.render()
@@ -87,14 +85,14 @@ class ArmSimEnv(MujocoEnv):
             
         self.arm = Arm(rate_hz=rate_hz,
                        get_pos_fn=get_pos_fn,
-                       get_vel_fn=get_vel_fn,
                        load_env_fn=load_env_fn,
                        should_truncate_fn=should_truncate_fn,
                        vis_fn=visualize,
                        set_obs_space_fn=set_obs_space,
                        np_random=self.np_random,
                        enable_normalize=enable_normalize,
-                       enable_terminate=enable_terminate)
+                       enable_terminate=enable_terminate,
+                       deterministic_goal=False)
 
         # The number of skip frames specifies how many mujoco timesteps to
         # simulate per call to step(). step() should be called at a simulation
@@ -113,6 +111,9 @@ class ArmSimEnv(MujocoEnv):
         self._mass_and_inertia_scale = mass_and_inertia_scale
         self.load_env()
 
+        # overwrite action space to use relative position scale
+        self.action_space = Box(low=-1, high=1, shape=(6,), dtype=np.float64)
+
 
     def load_env(self):
         if hasattr(self,"mujoco_renderer"):
@@ -125,12 +126,15 @@ class ArmSimEnv(MujocoEnv):
             default_camera_config=self.load_data.default_camera_config,
             **self.load_data.kwargs,
         )
+
         # setting the arm state must be done after loading the environment,
         # otherwise it will have no effect
         self._set_rand_arm_state()
 
 
-    def step(self, action):
+    def step(self, action_scale):
+        action = self.arm.action_scale_to_pos(action_scale, mj_model=self.model, qpos=self.data.qpos)
+
         # If rendering, ensure that step is not called faster than the desired
         # rate. This is not needed when not rendering because the simulation is
         # stepped by the appropriate number of skip frames, so step() should be
@@ -147,22 +151,6 @@ class ArmSimEnv(MujocoEnv):
         return self.arm.reset(mj_model=self.model, mj_data=self.data)
 
 
-    def forward_kinematics_ee(self, qpos, site_name = "gripper"):
-        # store the current state
-        q_init = self.data.qpos.copy()
-
-        # calculate FK
-        self.data.qpos[:] = qpos
-        mujoco.mj_kinematics(self.model, self.data)
-        ee_pos = self.data.site("gripper").xpos.copy()
-
-        # restore state
-        self.data.qpos[:] = q_init
-        mujoco.mj_kinematics(self.model, self.data)
-
-        return ee_pos
-
-
     def inverse_kinematics(self, target_xyz, q_init= None, max_iter= 200):
         if q_init is None:
             q_init = self.init_qpos.copy()
@@ -172,7 +160,7 @@ class ArmSimEnv(MujocoEnv):
 
         # nested error function for the solver
         def error(q):
-            return self.forward_kinematics_ee(q) - target_xyz
+            return self.arm.forward_kinematics_ee(q, mj_model=self.model, mj_data=self.data) - target_xyz
 
         # numerical IK solver
         sol = least_squares(
@@ -228,7 +216,7 @@ class ArmSimEnv(MujocoEnv):
             pos=rpz_to_xyz(self.arm.goal_rpz),
             quat=[0, 1, 0, 0],
         )
-        
+
         # compile model and create data
         model = spec.compile()
         model.vis.global_.offwidth = self.width
