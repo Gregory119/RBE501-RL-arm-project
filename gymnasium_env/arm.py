@@ -21,22 +21,17 @@ class Arm:
     """
 
     def __init__(self,
-                rate_hz: int,
-                get_pos_fn,
-                get_vel_fn,
-                load_env_fn,
-                should_truncate_fn,
-                vis_fn,
-                set_obs_space_fn,
-                np_random,
-                enable_normalize = True,
-                enable_terminate = False,
-                mass_scale_range: tuple[float, float] = (1.0, 1.0),
-                mass_scale_seed: int | None = None,
-                shared_mass_scale: float | None = None,
-                mass_scale = None,
-                max_episode_steps=500,
-                **kwargs):
+                 rate_hz: int,
+                 get_pos_fn,
+                 get_vel_fn,
+                 load_env_fn,
+                 should_truncate_fn,
+                 vis_fn,
+                 set_obs_space_fn,
+                 np_random,
+                 enable_normalize = True,
+                 enable_terminate = False,
+                 **kwargs):
         """Constructor
         
         :param enable_normalize If True, normalizes the observation
@@ -45,30 +40,6 @@ class Arm:
         position is within a radius of the goal. Enabling this reduces
         reward performance because future rewards in terminal states have a reward of
         zero, resulting in the ee avoiding the goal region."""
-
-        """
-        :param max_episode_steps Number of steps before timeout/truncation.
-        """
-        if xml_file is None:
-            xml_file = path.join(
-                path.dirname(__file__),
-                "SO-ARM100", "Simulation", "SO101", "scene.xml"
-            )
-        if not path.exists(xml_file):
-            raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
-            
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
-
-        self.goal = np.array([0.5,0.1,0.1])
-        self.mass_scale_range = mass_scale_range
-        self.mass_scale_seed  = mass_scale_seed
-        self.shared_mass_scale = float(shared_mass_scale) if shared_mass_scale is not None else None
-        
-        self._mass_scale = None 
-        self._load_env()
-        self.max_episode_steps = max_episode_steps
-        self.steps = 0
-        self.reset_model()
 
         self.rate_hz = rate_hz
         self.get_pos_fn = get_pos_fn
@@ -96,44 +67,6 @@ class Arm:
         self.prev_step_ts_ns = None
 
 
-    def _generate_mass_scales(self):
-        low, high = self.mass_scale_range
-        rng = self.np_random
-        self._mass_scales = rng.uniform(low, high, size=self.model.nbody)
-        self._mass_scales[0] = 1.0          #fix world body
-
-    def _apply_mass_scales(self, model):
-        if self._mass_scale is None:
-            if self.shared_mass_scale is not None:
-                
-                self._mass_scale = self.shared_mass_scale
-                print(f" Link mass global scale (shared): {self._mass_scale:.4f}")
-            else:
-                # scalar
-                low, high = self.mass_scale_range
-                rng = (
-                    np.random.default_rng(self.mass_scale_seed)
-                    if self.mass_scale_seed is not None else self.np_random
-                )
-                self._mass_scale = float(rng.uniform(low, high))
-                print(f"Link mass global scale: {self._mass_scale:.4f}")
-
-        # apply the scalar to every arm link
-        model.body_mass[1:]    *= self._mass_scale
-        model.body_inertia[1:] *= self._mass_scale
-
-
-    def _load_env(self):
-        if hasattr(self,"mujoco_renderer"):
-            self.close() # close the renderer
-        MujocoEnv.__init__(
-            self,
-            model_path=self.load_data.xml_file,
-            frame_skip=self.load_data.frame_skip,
-            observation_space=self.load_data.observation_space,
-            default_camera_config=self.load_data.default_camera_config,
-            **self.load_data.kwargs,
-        )
     def step_sleep(self, display_rate=False):
         """Call this within step() to sleep the required amount to meet the
         desired step rate. This of course cannot take time away to speed up the
@@ -234,19 +167,6 @@ class Arm:
         q = self.get_pos_fn()
         dq = self.get_vel_fn()
         
-        # add a site for the goal
-        spec.worldbody.add_site(
-            pos=self.goal,
-            quat=[0, 1, 0, 0],
-        )
-        
-        # compile model and create data
-        model = spec.compile()
-        model.vis.global_.offwidth = self.width
-        model.vis.global_.offheight = self.height
-        self._apply_mass_scales(model)
-        data = mujoco.MjData(model)
-        return model, data
         if self.enable_normalize:
             # normalize observation data
             q_new = (copy.deepcopy(q) - q_low) / (2*np.pi) # [0,1]

@@ -45,8 +45,9 @@ class ArmSimEnv(MujocoEnv):
         default_camera_config: dict[str, float | int] = DEFAULT_CAMERA_CONFIG,
         enable_normalize = True,
         enable_terminate = False,
+        mass_and_inertia_scale = 1.0,
         **kwargs,
-    ):
+        ):
         """Constructor
 
         :param enable_normalize If True, normalizes the observation
@@ -109,6 +110,7 @@ class ArmSimEnv(MujocoEnv):
                                        default_camera_config=default_camera_config,
                                        kwargs=kwargs)
 
+        self._mass_and_inertia_scale = mass_and_inertia_scale
         self.load_env()
 
 
@@ -231,8 +233,15 @@ class ArmSimEnv(MujocoEnv):
         model = spec.compile()
         model.vis.global_.offwidth = self.width
         model.vis.global_.offheight = self.height
+        self.scale_masses_and_inertias(model)
         data = mujoco.MjData(model)
 
         model.opt.timestep = self.mj_timestep
 
         return model, data
+
+
+    def scale_masses_and_inertias(self, model):
+        # apply the scale to every arm link
+        model.body_mass[1:]    *= self._mass_and_inertia_scale
+        model.body_inertia[1:] *= self._mass_and_inertia_scale
