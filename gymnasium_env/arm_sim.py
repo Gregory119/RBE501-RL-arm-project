@@ -46,6 +46,7 @@ class ArmSimEnv(MujocoEnv):
         enable_normalize = True,
         enable_terminate = False,
         mass_and_inertia_scale = 1.0,
+        enable_rand_ee_start_and_goal = True,
         **kwargs,
         ):
         """Constructor
@@ -56,6 +57,8 @@ class ArmSimEnv(MujocoEnv):
         position is within a radius of the goal. Enabling this reduces
         reward performance because future rewards in terminal states have a reward of
         zero, resulting in the ee avoiding the goal region.
+        :param enable_rand_ee_start_and_goal If True, the end-effector start
+        position and the goal are randomly selected for each episode.
 
         """
         if xml_file is None:
@@ -82,6 +85,14 @@ class ArmSimEnv(MujocoEnv):
         def set_obs_space(obs_space):
             nonlocal observation_space
             observation_space = obs_space
+
+
+        default_goal_rpz = None
+        if not enable_rand_ee_start_and_goal:
+            rho = 0.0254*16
+            phi = -np.pi/2/4
+            z = 0.0254*7
+            default_goal_rpz = (rho,phi,z)
             
         self.arm = Arm(rate_hz=rate_hz,
                        get_pos_fn=get_pos_fn,
@@ -92,7 +103,7 @@ class ArmSimEnv(MujocoEnv):
                        np_random=self.np_random,
                        enable_normalize=enable_normalize,
                        enable_terminate=enable_terminate,
-                       deterministic_goal=False)
+                       default_goal_rpz=default_goal_rpz)
 
         # The number of skip frames specifies how many mujoco timesteps to
         # simulate per call to step(). step() should be called at a simulation
@@ -109,6 +120,7 @@ class ArmSimEnv(MujocoEnv):
                                        kwargs=kwargs)
 
         self._mass_and_inertia_scale = mass_and_inertia_scale
+        self._enable_rand_ee_start_and_goal = enable_rand_ee_start_and_goal
         self.load_env()
 
         # overwrite action space to use relative position scale
@@ -129,7 +141,8 @@ class ArmSimEnv(MujocoEnv):
 
         # setting the arm state must be done after loading the environment,
         # otherwise it will have no effect
-        self._set_rand_arm_state()
+        if self._enable_rand_ee_start_and_goal:
+            self._set_rand_arm_state()
 
 
     def step(self, action_scale):

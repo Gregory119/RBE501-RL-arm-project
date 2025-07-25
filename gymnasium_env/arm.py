@@ -43,7 +43,7 @@ class Arm:
                  rpz_low = None,
                  rpz_high = None,
                  assert_obs = True,
-                 deterministic_goal = False,
+                 default_goal_rpz = None,
                  **kwargs):
         """Constructor
         
@@ -52,7 +52,11 @@ class Arm:
         :param enable_terminate If True, episodes are terminated when the ee
         position is within a radius of the goal. Enabling this reduces
         reward performance because future rewards in terminal states have a reward of
-        zero, resulting in the ee avoiding the goal region."""
+        zero, resulting in the ee avoiding the goal region.
+        :param default_goal_rpz Set this to a deterministic goal in cylindrical
+        coordinates. If None, a random goal will be sampled.
+
+        """
 
         self.rate_hz = rate_hz
         self.get_pos_fn = get_pos_fn
@@ -81,8 +85,7 @@ class Arm:
             assert self.rpz_high.shape == (3,)
 
         self.assert_obs = assert_obs
-        self.deterministic_goal = deterministic_goal
-
+        self.default_goal_rpz = default_goal_rpz
         self.goal_rpz = self.sample_pos_rpz()
 
         self.prev_step_ts_ns = None
@@ -182,7 +185,7 @@ class Arm:
 
 
     def sample_pos_rpz(self):
-        if not self.deterministic_goal:
+        if self.default_goal_rpz is None:
             # the robot is facing in the -y direction
 
             # set limits in cylindrical coordinates
@@ -194,10 +197,7 @@ class Arm:
 
             return np.array([rho, phi, z])
 
-        rho = 0.0254*16
-        phi = -np.pi/2
-        z = 0.0254*10
-        return np.array([rho, phi, z])
+        return self.default_goal_rpz
 
 
     def in_bounds(self, pos_xyz):
@@ -247,12 +247,12 @@ class Arm:
                 assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
             np.clip(q_new, a_min=-1, a_max=1)
 
+            goal_rpz_new = np.array(self.goal_rpz)
             if self.assert_obs:
-                assert(self.goal_rpz.shape == (3,))
+                assert(goal_rpz_new.shape == (3,))
                 assert(self.rpz_low.shape == (3,))
                 assert(self.rpz_high.shape == (3,))
 
-            goal_rpz_new = self.goal_rpz.copy()
             goal_rpz_new = (goal_rpz_new - self.rpz_low)/(self.rpz_high - self.rpz_low)
             # each normalized goal element is now within [0,1], but the other
             # observations are within [-1,1] so adjust the goal elements to be
