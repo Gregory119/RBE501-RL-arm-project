@@ -85,7 +85,11 @@ def handle_fault():
         g_hw_env.send_action(action)
 
 #start arm env
-def make_sim_env(mass_and_inertia_scale: float, rank: int, vis: bool = False, seed: int = 0):
+def make_sim_env(mass_and_inertia_scale: float,
+                 enable_rand_ee_start_and_goal,
+                 rank: int,
+                 vis: bool = False,
+                 seed: int = 0):
     def _init():
         render_mode=None
         if vis:
@@ -93,7 +97,8 @@ def make_sim_env(mass_and_inertia_scale: float, rank: int, vis: bool = False, se
 
         env = gym.make("ArmSim-v0",
                        render_mode=render_mode,
-                       mass_and_inertia_scale=mass_and_inertia_scale)
+                       mass_and_inertia_scale=mass_and_inertia_scale,
+                       enable_rand_ee_start_and_goal=enable_rand_ee_start_and_goal)
         env.reset(seed=seed + rank)
         return env
     return _init
@@ -120,7 +125,10 @@ def main(args):
         # one hardware environment
         env_fns = [make_hw_env]
     else:
-        env_fns = [make_sim_env(args.mass_and_inertia_scale,i,vis=args.vis) for i in range(num_envs)]
+        env_fns = [make_sim_env(mass_and_inertia_scale=args.mass_and_inertia_scale,
+                                enable_rand_ee_start_and_goal=not args.det_ee_and_goal,
+                                rank=i,
+                                vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
 
     device = "auto"
@@ -217,8 +225,10 @@ if __name__ == "__main__":
     parser.add_argument("--logdir", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
     parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
-    parser.add_argument("--hw", help="use hardware environment", action="store_true")
+    parser.add_argument("--hw", help="use hardware environment", action="store_true", default=False)
     parser.add_argument("--mass-and-inertia-scale", type=float, default=1.0)
+    parser.add_argument("--det-ee-and-goal", help="Enable deterministic start position of the end-effector and the goal for each episode. This is only used in simulation.", action="store_true", default=False)
+
     subparsers = parser.add_subparsers(dest="mode")
     train_parser = subparsers.add_parser("train")
     train_parser.add_argument("--num-envs", type=int, default=8)

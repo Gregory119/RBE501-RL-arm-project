@@ -59,6 +59,10 @@ class ArmHwEnv(gym.Env):
         def set_obs_space(obs_space):
             self.observation_space = obs_space
 
+        rho = 0.0254*16
+        phi = -np.pi/2
+        z = 0.0254*10
+        default_goal_rpz = (rho,phi,z)
         self.arm = Arm(rate_hz=rate_hz,
                        get_pos_fn=get_pos_fn,
                        load_env_fn=load_env_fn,
@@ -71,7 +75,7 @@ class ArmHwEnv(gym.Env):
                        rpz_low=rpz_low,
                        rpz_high=rpz_high,
                        assert_obs=False,
-                       deterministic_goal=True)
+                       default_goal_rpz=default_goal_rpz)
 
         # Set the action space to scale relative position
         self.action_space = Box(low=-1, high=1, shape=(6,), dtype=np.float64)
