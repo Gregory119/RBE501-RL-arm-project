@@ -1,6 +1,8 @@
 # RBE501-RL-arm-project
 Motion planning of a robot arm using reinforcement learning
 
+https://github.com/user-attachments/assets/43904edb-7247-4477-93f4-daeb2707d9ab
+
 ## Setup
 ### Base and Simulation Dependencies
 First [install poetry](https://python-poetry.org/docs/)
