@@ -84,6 +84,7 @@ def handle_fault():
         action = np.array([0,-80,90,0,0,0])/180*np.pi
         g_hw_env.send_action(action)
 
+
 #start arm env
 def make_sim_env(mass_and_inertia_scale: float,
                  enable_rand_ee_start_and_goal,
@@ -148,6 +149,7 @@ def main(args):
     run_nums = [int(run_num_re.match(folder.name).group(1)) for folder in log_dir_base.iterdir() if str(folder.name).startswith(folder_start) and run_num_re.match(folder.name) is not None]
     run_nums.append(0)
     run_num = max(run_nums)+1
+    print("run/model number: {}".format(run_num))
     # if evaluating a model its helpful to know the model training run number
     model = "model_" + str(args.model_num) + "_" if args.mode == "eval" else ""
     log_dir = log_dir_base / (folder_start + model + "run_" + str(run_num))
@@ -220,18 +222,18 @@ if __name__ == "__main__":
 
     #parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--total-steps", type=int, default=4000_000)
-    parser.add_argument("--num-checkpoints", type=int, default=10)
-    parser.add_argument("--logdir", type=str, default="logs/")
+    parser.add_argument("--total-steps", help="total number of environment training steps", type=int, default=4000_000)
+    parser.add_argument("--num-checkpoints", help="number of intermeditate models saved over training", type=int, default=10)
+    parser.add_argument("--logdir", help="directory containing all logs", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
-    parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
+    parser.add_argument("--alg", help="selected algorithm", type=str, choices=["PPO","SAC"], default="PPO")
     parser.add_argument("--hw", help="use hardware environment", action="store_true", default=False)
-    parser.add_argument("--mass-and-inertia-scale", type=float, default=1.0)
+    parser.add_argument("--mass-and-inertia-scale", help="the mass and inertia of each link will be modified by multiplying by this scale factor", type=float, default=1.0)
     parser.add_argument("--det-ee-and-goal", help="Enable deterministic start position of the end-effector and the goal for each episode. This is only used in simulation.", action="store_true", default=False)
 
     subparsers = parser.add_subparsers(dest="mode")
     train_parser = subparsers.add_parser("train")
-    train_parser.add_argument("--num-envs", type=int, default=8)
+    train_parser.add_argument("--num-envs", help="number of parallel environments to use during training", type=int, default=8)
     eval_parser = subparsers.add_parser("eval")
     eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
 

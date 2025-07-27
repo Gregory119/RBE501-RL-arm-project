@@ -1,7 +1,13 @@
 from gymnasium.envs.registration import register
 
 from .arm_sim import ArmSimEnv
-from .arm_hw import ArmHwEnv
+
+try:
+    from .arm_hw import ArmHwEnv
+    enable_hw = True
+except ImportError:
+    enable_hw = False
+
 
 register(
     id="ArmSim-v0",
@@ -9,8 +15,9 @@ register(
     max_episode_steps=300
 )
 
-register(
-    id="ArmHw-v0",
-    entry_point="gymnasium_env.arm_hw:ArmHwEnv",
-    max_episode_steps=200
-)
+if enable_hw:
+    register(
+        id="ArmHw-v0",
+        entry_point="gymnasium_env.arm_hw:ArmHwEnv",
+        max_episode_steps=200
+        )
