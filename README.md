@@ -1,5 +1,7 @@
 # RBE501-RL-arm-project
-Motion planning of a robot arm using reinforcement learning
+Motion planning of a robot arm using reinforcement learning. The goal is to
+train a RL policy to move the end effector of a robot arm to a goal position as
+fast as possible, excluding orientation.
 
 https://github.com/user-attachments/assets/43904edb-7247-4477-93f4-daeb2707d9ab
 
