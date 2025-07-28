@@ -46,6 +46,7 @@ class ArmSimEnv(MujocoEnv):
         enable_normalize = True,
         enable_terminate = False,
         mass_and_inertia_scale = 1.0,
+        enable_rand_ee_start_and_goal = True,
         **kwargs,
         ):
         """Constructor
@@ -79,10 +80,26 @@ class ArmSimEnv(MujocoEnv):
                 self.mujoco_renderer.viewer.vopt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
         observation_space = None
+        
         def set_obs_space(obs_space):
             nonlocal observation_space
             observation_space = obs_space
-            
+        default_goal_rpz = None
+
+
+        if not enable_rand_ee_start_and_goal:
+
+
+            rho = 0.0254*16
+
+
+            phi = -np.pi/2/4
+
+
+            z = 0.0254*7
+
+
+            default_goal_rpz = (rho,phi,z)    
         self.arm = Arm(rate_hz=rate_hz,
                        get_pos_fn=get_pos_fn,
                        load_env_fn=load_env_fn,
@@ -92,7 +109,7 @@ class ArmSimEnv(MujocoEnv):
                        np_random=self.np_random,
                        enable_normalize=enable_normalize,
                        enable_terminate=enable_terminate,
-                       deterministic_goal=False)
+                       default_goal_rpz=default_goal_rpz)
 
         # The number of skip frames specifies how many mujoco timesteps to
         # simulate per call to step(). step() should be called at a simulation
@@ -109,6 +126,7 @@ class ArmSimEnv(MujocoEnv):
                                        kwargs=kwargs)
 
         self._mass_and_inertia_scale = mass_and_inertia_scale
+        self._enable_rand_ee_start_and_goal = enable_rand_ee_start_and_goal
         self.load_env()
 
         # overwrite action space to use relative position scale
@@ -129,7 +147,20 @@ class ArmSimEnv(MujocoEnv):
 
         # setting the arm state must be done after loading the environment,
         # otherwise it will have no effect
-        self._set_rand_arm_state()
+        if self._enable_rand_ee_start_and_goal:
+
+
+            self._set_rand_arm_state()
+
+    #get 3-vector data for goal
+    def get_goal_xyz(self):
+        from .arm import rpz_to_xyz
+        return rpz_to_xyz(np.array(self.arm.goal_rpz, dtype=np.float64))
+
+    # get 3-vector data for end effector position
+    def get_ee_pos(self):
+        
+        return self.data.site("gripper").xpos.copy()
 
 
     def step(self, action_scale):

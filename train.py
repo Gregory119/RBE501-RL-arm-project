@@ -7,6 +7,9 @@ import os
 from typing import List
 import re
 import signal
+import pickle
+
+
 
 from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
@@ -15,6 +18,8 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env.vec_monitor import VecMonitor
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.evaluation import evaluate_policy
+
+
 
 from torch.utils.tensorboard import SummaryWriter
 import gymnasium_env
@@ -85,7 +90,19 @@ def handle_fault():
         g_hw_env.send_action(action)
 
 #start arm env
-def make_sim_env(mass_and_inertia_scale: float, rank: int, vis: bool = False, seed: int = 0):
+def make_sim_env(mass_and_inertia_scale: float,
+
+
+                 enable_rand_ee_start_and_goal,
+
+
+                 rank: int,
+
+
+                 vis: bool = False,
+
+
+                 seed: int = 0):
     def _init():
         render_mode=None
         if vis:
@@ -93,7 +110,8 @@ def make_sim_env(mass_and_inertia_scale: float, rank: int, vis: bool = False, se
 
         env = gym.make("ArmSim-v0",
                        render_mode=render_mode,
-                       mass_and_inertia_scale=mass_and_inertia_scale)
+                       mass_and_inertia_scale=mass_and_inertia_scale,
+                       enable_rand_ee_start_and_goal=enable_rand_ee_start_and_goal)
         env.reset(seed=seed + rank)
         return env
     return _init
@@ -120,7 +138,17 @@ def main(args):
         # one hardware environment
         env_fns = [make_hw_env]
     else:
-        env_fns = [make_sim_env(args.mass_and_inertia_scale,i,vis=args.vis) for i in range(num_envs)]
+        env_fns = [make_sim_env(mass_and_inertia_scale=args.mass_and_inertia_scale,
+
+
+
+                                enable_rand_ee_start_and_goal=not args.det_ee_and_goal,
+
+
+                                rank=i,
+
+
+                                vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
 
     device = "auto"
@@ -189,16 +217,41 @@ def main(args):
         model.set_logger(logger)
         
         log_helper = LogHelper(model.logger)
-        
         obs = venv.reset()
-        for i in range(args.total_steps):
-            action, state = model.predict(obs,deterministic=True)  # agent policy that uses the observation and info
-            obs, rewards, dones, info = venv.step(action)
-            # vectorized environments are automatically reset at the end of
-            # each episode, so no need to do that here
+        episode_id      = 0
+        step_in_episode = 0   # counts frames inside the current episode
+        trajectory      = []
+        goal_xyz        = venv.env_method("get_goal_xyz")[0]
 
-            log_helper.on_step(num_envs=venv.num_envs, dones=dones, rewards=rewards, num_timesteps=model.num_timesteps)
-            model.logger.dump(i+1)
+        for global_step in range(args.total_steps):
+
+            # gripper pose before the action
+            ee_pos = venv.env_method("get_ee_pos")[0]
+            if step_in_episode > 0:  # skip the first neutral frame, avoids initialization at 0
+                trajectory.append(ee_pos)
+
+            # agent acts
+            action, _ = model.predict(obs, deterministic=True)
+            obs, rewards, dones, infos = venv.step(action)
+            step_in_episode += 1
+
+            # episode boundary
+            if dones[0]:
+                np.savez(
+                    log_dir / f"ee_traj_ep{episode_id}.npz",
+                    traj=np.asarray(trajectory, dtype=np.float32),
+                    goal=goal_xyz,
+                )
+                episode_id      += 1
+                trajectory       = [] # start empty
+                step_in_episode  = 0
+                goal_xyz         = venv.env_method("get_goal_xyz")[0]
+
+            
+            log_helper.on_step(venv.num_envs, dones, rewards, global_step + 1)
+            model.logger.dump(global_step + 1)
+
+        
 
         print("Evaluation Done")
     venv.close()
@@ -217,8 +270,9 @@ if __name__ == "__main__":
     parser.add_argument("--logdir", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
     parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
-    parser.add_argument("--hw", help="use hardware environment", action="store_true")
+    parser.add_argument("--hw", help="use hardware environment", action="store_true", default=False)
     parser.add_argument("--mass-and-inertia-scale", type=float, default=1.0)
+    parser.add_argument("--det-ee-and-goal", help="Enable deterministic start position of the end-effector and the goal for each episode. This is only used in simulation.", action="store_true", default=False)
     subparsers = parser.add_subparsers(dest="mode")
     train_parser = subparsers.add_parser("train")
     train_parser.add_argument("--num-envs", type=int, default=8)
