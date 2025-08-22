@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 '''
-This script plots the 3d trajectory of a single episode in an evaluation run. To run the script, 
+This script plots the 3d trajectories of a single episode in one or multiple evaluation runs. To run the script, 
 add the file name containing the trajectory to the command line(with relative path). The output plot is displayed and must be manually saved
 '''
 
