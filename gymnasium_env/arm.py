@@ -246,7 +246,6 @@ class Arm:
             if self.assert_obs:
                 assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
             np.clip(q_new, a_min=-1, a_max=1)
-
             goal_rpz_new = np.array(self.goal_rpz)
             if self.assert_obs:
                 assert(goal_rpz_new.shape == (3,))

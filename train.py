@@ -7,6 +7,9 @@ import os
 from typing import List
 import re
 import signal
+import pickle
+
+
 
 from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
@@ -16,9 +19,12 @@ from stable_baselines3.common.vec_env.vec_monitor import VecMonitor
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.evaluation import evaluate_policy
 
+
+
 from torch.utils.tensorboard import SummaryWriter
 import gymnasium_env
 
+from gymnasium_env.arm import rpz_to_xyz
 
 
 class LogHelper:
@@ -59,6 +65,77 @@ class LogHelper:
         self.ep_lens[dones] = 0
         self.ep_lens += 1
 
+
+#trajectory logging 
+
+class TrajectoryRecorder(BaseCallback):
+    
+    def __init__(self, save_dir: Path, verbose: int = 0):
+        super().__init__(verbose)
+        self.save_dir = Path(save_dir)
+        self.episode_id = 0
+        self.step_in_episode = 0
+        self.trajectory = []
+        self.goal_xyz = None
+
+    # SB3
+    def _on_training_start(self) -> None:
+        arms = self.training_env.get_attr("arm")
+        self.goal_xyz = rpz_to_xyz(arms[0].goal_rpz)
+
+    def _on_step(self) -> bool:
+        dones = self.locals["dones"]
+        arms = self.training_env.get_attr("arm")
+        ee_list = [arm.ee_xyz for arm in arms]
+
+        
+        if len(self.trajectory) == 0:
+            self.trajectory = [[] for _ in range(len(ee_list))]
+
+        # append
+        if self.step_in_episode > 0:
+            for i, (ee, done) in enumerate(zip(ee_list, dones)):
+                if not done:
+                    self.trajectory[i].append(ee)
+
+        # episode boundaries
+        for i, done in enumerate(dones):
+            if done:
+                goal_i = rpz_to_xyz(arms[i].goal_rpz)
+                np.savez(
+                    self.save_dir / f"ee_traj_env{i}_ep{self.episode_id}.npz",
+                    traj=np.asarray(self.trajectory[i], dtype=np.float32),
+                    goal=np.asarray(goal_i, dtype=np.float32),
+                )
+                self.trajectory[i] = [] # start fresh for each  env
+
+        # reset
+        if any(dones):
+            self.step_in_episode = 0
+            self.episode_id += 1
+        else:
+            self.step_in_episode += 1
+        return True
+
+
+    def eval_on_step(self, venv, dones) -> None:
+        ee_pos = venv.env_method("get_ee_pos")[0]
+
+        if dones[0]:
+            np.savez(
+                self.save_dir / f"ee_traj_ep{self.episode_id}.npz",
+                traj=np.asarray(self.trajectory, dtype=np.float32),
+                goal=np.asarray(self.goal_xyz, dtype=np.float32),
+            )
+            self.episode_id += 1
+            self.trajectory = []
+            self.step_in_episode = 0
+            self.goal_xyz = venv.env_method("get_goal_xyz")[0]
+            return
+
+        if self.step_in_episode > 0:
+            self.trajectory.append(ee_pos)
+        self.step_in_episode += 1
 
 #TensorBoard logging callbacks
 
@@ -175,6 +252,8 @@ def main(args):
             save_path="checkpoints",
             name_prefix=model_prefix,
             )
+
+        traj_cb = TrajectoryRecorder(save_dir=log_dir)
         callback = CallbackList([checkpoint_cb, tb_cb])
 
         # Begin training
@@ -186,29 +265,29 @@ def main(args):
         print("Training Done")
     elif args.mode=="eval":
         print("Evaluating")
-        # the model number given on the command line argument corresponds to
-        # the training run number the model should be loaded from
         model_prefix = folder_start+"run_"+str(args.model_num)
         final_model_path = "checkpoints/"+model_prefix+".zip"
 
-        # this is replicating the case of evaluating on hardware as close as
-        # possible but still using simulation, so there should only be one
-        # environment
-        
-        model = alg.load(final_model_path,print_system_info=True)
+        model = alg.load(final_model_path, print_system_info=True)
         model.set_logger(logger)
-        
-        log_helper = LogHelper(model.logger)
-        
-        obs = venv.reset()
-        for i in range(args.total_steps):
-            action, state = model.predict(obs,deterministic=True)  # agent policy that uses the observation and info
-            obs, rewards, dones, info = venv.step(action)
-            # vectorized environments are automatically reset at the end of
-            # each episode, so no need to do that here
 
-            log_helper.on_step(num_envs=venv.num_envs, dones=dones, rewards=rewards, num_timesteps=model.num_timesteps)
-            model.logger.dump(i+1)
+        log_helper = LogHelper(model.logger)
+        obs = venv.reset()
+
+        
+        traj_rec = TrajectoryRecorder(save_dir=log_dir, verbose=0)
+        traj_rec.goal_xyz = venv.env_method("get_goal_xyz")[0]  # seed initial goal
+
+        for global_step in range(args.total_steps):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, rewards, dones, infos = venv.step(action)
+
+            # trajectories,goals,saving
+            traj_rec.eval_on_step(venv, dones)
+
+            # scalar logging using TB
+            log_helper.on_step(venv.num_envs, dones, rewards, global_step + 1)
+            model.logger.dump(global_step + 1)
 
         print("Evaluation Done")
     venv.close()

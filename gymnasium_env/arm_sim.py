@@ -82,6 +82,7 @@ class ArmSimEnv(MujocoEnv):
                 self.mujoco_renderer.viewer.vopt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
         observation_space = None
+        
         def set_obs_space(obs_space):
             nonlocal observation_space
             observation_space = obs_space
@@ -144,6 +145,13 @@ class ArmSimEnv(MujocoEnv):
         if self._enable_rand_ee_start_and_goal:
             self._set_rand_arm_state()
 
+    def get_ee_pos(self):
+        return self.arm.forward_kinematics_ee(
+            self.data.qpos, mj_model=self.model, mj_data=self.data
+        )
+
+    def get_goal_xyz(self):
+        return rpz_to_xyz(self.arm.goal_rpz)
 
     def step(self, action_scale):
         action = self.arm.action_scale_to_pos(action_scale, mj_model=self.model, qpos=self.data.qpos)
