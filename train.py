@@ -24,6 +24,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from torch.utils.tensorboard import SummaryWriter
 import gymnasium_env
 
+from gymnasium_env.arm import rpz_to_xyz
 
 
 class LogHelper:
@@ -79,11 +80,13 @@ class TrajectoryRecorder(BaseCallback):
 
     # SB3
     def _on_training_start(self) -> None:
-        self.goal_xyz = self.training_env.env_method("get_goal_xyz")[0]
+        arms = self.training_env.get_attr("arm")
+        self.goal_xyz = rpz_to_xyz(arms[0].goal_rpz)
 
     def _on_step(self) -> bool:
         dones = self.locals["dones"]
-        ee_list = self.training_env.env_method("get_ee_pos")
+        arms = self.training_env.get_attr("arm")
+        ee_list = [arm.ee_xyz for arm in arms]
 
         
         if len(self.trajectory) == 0:
@@ -98,7 +101,7 @@ class TrajectoryRecorder(BaseCallback):
         # episode boundaries
         for i, done in enumerate(dones):
             if done:
-                goal_i = self.training_env.env_method("get_goal_xyz")[i]
+                goal_i = rpz_to_xyz(arms[i].goal_rpz)
                 np.savez(
                     self.save_dir / f"ee_traj_env{i}_ep{self.episode_id}.npz",
                     traj=np.asarray(self.trajectory[i], dtype=np.float32),
@@ -118,7 +121,6 @@ class TrajectoryRecorder(BaseCallback):
     def eval_on_step(self, venv, dones) -> None:
         ee_pos = venv.env_method("get_ee_pos")[0]
 
-        # save if episode finished
         if dones[0]:
             np.savez(
                 self.save_dir / f"ee_traj_ep{self.episode_id}.npz",
@@ -131,7 +133,6 @@ class TrajectoryRecorder(BaseCallback):
             self.goal_xyz = venv.env_method("get_goal_xyz")[0]
             return
 
-        # append
         if self.step_in_episode > 0:
             self.trajectory.append(ee_pos)
         self.step_in_episode += 1
@@ -160,19 +161,12 @@ def handle_fault():
         action = np.array([0,-80,90,0,0,0])/180*np.pi
         g_hw_env.send_action(action)
 
+
 #start arm env
 def make_sim_env(mass_and_inertia_scale: float,
-
-
                  enable_rand_ee_start_and_goal,
-
-
                  rank: int,
-
-
                  vis: bool = False,
-
-
                  seed: int = 0):
     def _init():
         render_mode=None
@@ -210,15 +204,8 @@ def main(args):
         env_fns = [make_hw_env]
     else:
         env_fns = [make_sim_env(mass_and_inertia_scale=args.mass_and_inertia_scale,
-
-
-
                                 enable_rand_ee_start_and_goal=not args.det_ee_and_goal,
-
-
                                 rank=i,
-
-
                                 vis=args.vis) for i in range(num_envs)]
     venv = SubprocVecEnv(env_fns)
 
@@ -239,6 +226,7 @@ def main(args):
     run_nums = [int(run_num_re.match(folder.name).group(1)) for folder in log_dir_base.iterdir() if str(folder.name).startswith(folder_start) and run_num_re.match(folder.name) is not None]
     run_nums.append(0)
     run_num = max(run_nums)+1
+    print("run/model number: {}".format(run_num))
     # if evaluating a model its helpful to know the model training run number
     model = "model_" + str(args.model_num) + "_" if args.mode == "eval" else ""
     log_dir = log_dir_base / (folder_start + model + "run_" + str(run_num))
@@ -313,17 +301,18 @@ if __name__ == "__main__":
 
     #parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--total-steps", type=int, default=4000_000)
-    parser.add_argument("--num-checkpoints", type=int, default=10)
-    parser.add_argument("--logdir", type=str, default="logs/")
+    parser.add_argument("--total-steps", help="total number of environment training steps", type=int, default=4000_000)
+    parser.add_argument("--num-checkpoints", help="number of intermeditate models saved over training", type=int, default=10)
+    parser.add_argument("--logdir", help="directory containing all logs", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")
-    parser.add_argument("--alg", type=str, choices=["PPO","SAC"], default="SAC")
+    parser.add_argument("--alg", help="selected algorithm", type=str, choices=["PPO","SAC"], default="PPO")
     parser.add_argument("--hw", help="use hardware environment", action="store_true", default=False)
-    parser.add_argument("--mass-and-inertia-scale", type=float, default=1.0)
+    parser.add_argument("--mass-and-inertia-scale", help="the mass and inertia of each link will be modified by multiplying by this scale factor", type=float, default=1.0)
     parser.add_argument("--det-ee-and-goal", help="Enable deterministic start position of the end-effector and the goal for each episode. This is only used in simulation.", action="store_true", default=False)
+
     subparsers = parser.add_subparsers(dest="mode")
     train_parser = subparsers.add_parser("train")
-    train_parser.add_argument("--num-envs", type=int, default=8)
+    train_parser.add_argument("--num-envs", help="number of parallel environments to use during training", type=int, default=8)
     eval_parser = subparsers.add_parser("eval")
     eval_parser.add_argument("--model-num", type=int, required=True, help="the training run number of the model to load")
 

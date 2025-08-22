@@ -57,6 +57,8 @@ class ArmSimEnv(MujocoEnv):
         position is within a radius of the goal. Enabling this reduces
         reward performance because future rewards in terminal states have a reward of
         zero, resulting in the ee avoiding the goal region.
+        :param enable_rand_ee_start_and_goal If True, the end-effector start
+        position and the goal are randomly selected for each episode.
 
         """
         if xml_file is None:
@@ -84,22 +86,15 @@ class ArmSimEnv(MujocoEnv):
         def set_obs_space(obs_space):
             nonlocal observation_space
             observation_space = obs_space
+
+
         default_goal_rpz = None
-
-
         if not enable_rand_ee_start_and_goal:
-
-
             rho = 0.0254*16
-
-
             phi = -np.pi/2/4
-
-
             z = 0.0254*7
-
-
-            default_goal_rpz = (rho,phi,z)    
+            default_goal_rpz = (rho,phi,z)
+            
         self.arm = Arm(rate_hz=rate_hz,
                        get_pos_fn=get_pos_fn,
                        load_env_fn=load_env_fn,
@@ -148,20 +143,15 @@ class ArmSimEnv(MujocoEnv):
         # setting the arm state must be done after loading the environment,
         # otherwise it will have no effect
         if self._enable_rand_ee_start_and_goal:
-
-
             self._set_rand_arm_state()
 
-    #get 3-vector data for goal
-    def get_goal_xyz(self):
-        from .arm import rpz_to_xyz
-        return rpz_to_xyz(np.array(self.arm.goal_rpz, dtype=np.float64))
-
-    # get 3-vector data for end effector position
     def get_ee_pos(self):
-        
-        return self.data.site("gripper").xpos.copy()
+        return self.arm.forward_kinematics_ee(
+            self.data.qpos, mj_model=self.model, mj_data=self.data
+        )
 
+    def get_goal_xyz(self):
+        return rpz_to_xyz(self.arm.goal_rpz)
 
     def step(self, action_scale):
         action = self.arm.action_scale_to_pos(action_scale, mj_model=self.model, qpos=self.data.qpos)
