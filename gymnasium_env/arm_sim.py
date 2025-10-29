@@ -69,8 +69,9 @@ class ArmSimEnv(MujocoEnv):
             raise FileNotFoundError(f"Mujoco model not found: {xml_file}")
 
         # construct the arm class that has common arm environment functionality
-        
-        get_pos_fn = lambda: self.data.qpos
+
+        get_qpos_fn = lambda: self.data.qpos
+        get_qvel_fn = lambda: self.data.qvel
         load_env_fn = lambda: self.load_env()
         should_truncate_fn = lambda q: False
         def visualize():
@@ -96,7 +97,8 @@ class ArmSimEnv(MujocoEnv):
             default_goal_rpz = (rho,phi,z)
             
         self.arm = Arm(rate_hz=rate_hz,
-                       get_pos_fn=get_pos_fn,
+                       get_qpos_fn=get_qpos_fn,
+                       get_qvel_fn=get_qvel_fn,
                        load_env_fn=load_env_fn,
                        should_truncate_fn=should_truncate_fn,
                        vis_fn=visualize,

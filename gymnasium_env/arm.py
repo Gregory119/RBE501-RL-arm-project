@@ -32,7 +32,8 @@ class Arm:
 
     def __init__(self,
                  rate_hz: int,
-                 get_pos_fn,
+                 get_qpos_fn,
+                 get_qvel_fn,
                  load_env_fn,
                  should_truncate_fn,
                  vis_fn,
@@ -59,7 +60,8 @@ class Arm:
         """
 
         self.rate_hz = rate_hz
-        self.get_pos_fn = get_pos_fn
+        self.get_qpos_fn = get_qpos_fn
+        self.get_qvel_fn = get_qvel_fn
         self.load_env_fn = load_env_fn
         self.should_truncate_fn = should_truncate_fn
         self.vis_fn = vis_fn
@@ -69,9 +71,9 @@ class Arm:
         self.enable_normalize = enable_normalize
         self.enable_terminate = enable_terminate
         if self.enable_normalize:
-            observation_space = Box(low=-1, high=1, shape=(9,), dtype=np.float64)
+            observation_space = Box(low=-1, high=1, shape=(15,), dtype=np.float64)
         else:
-            observation_space = Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float64)
+            observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
         self.set_obs_space_fn(observation_space)
 
         # workspace bounds
@@ -89,6 +91,7 @@ class Arm:
         self.goal_rpz = self.sample_pos_rpz()
 
         self.prev_step_ts_ns = None
+        self.prev_dist = None
 
 
     def step_sleep(self, display_rate=False):
@@ -150,8 +153,24 @@ class Arm:
         dist = np.linalg.norm(ee_pos - rpz_to_xyz(self.goal_rpz))
         assert(dist > 0)
 
-        reward = np.exp(-10*dist)
+        # task reward
+        r1 = np.exp(-10*dist)
+        # damping reward
+        max_dist = self.rpz_high[0]*2
+        min_dur = 4
+        max_abs_speed = max_dist / min_dur
+        curr_speed = 0.0
+        if self.prev_dist:
+            # assume time step is constant (not true on hardware - todo)
+            curr_abs_speed = abs((dist - self.prev_dist)*self.rate_hz)
+        speed_diff = curr_abs_speed - max_abs_speed
+        r2 = 0.0
+        if speed_diff > 0:
+            r2 = np.exp(-speed_diff/max_abs_speed)
+        reward = 0.5*r1 + 0.5*r2
 
+        self.prev_dist = dist
+        
         # # if ee too close to ground, then penalize
         # assert self.goal_rpz[-1] >= self.rpz_low[-1], "goal: {}, rpz_low: {}".format(self.goal, self.rpz_low)
         # if xyz_to_rpz(ee_pos)[-1] < self.rpz_low[-1]:
@@ -237,7 +256,8 @@ class Arm:
     
     def get_obs(self, q_low):
         assert(q_low.shape == (6,))
-        q = self.get_pos_fn()
+        q = self.get_qpos_fn()
+        dq = self.get_qvel_fn()
         
         if self.enable_normalize:
             # normalize observation data
@@ -260,7 +280,7 @@ class Arm:
             if self.assert_obs:
                 assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
 
-            obs = np.concatenate([q_new, goal_rpz_new]).ravel()
+            obs = np.concatenate([q_new, dq, goal_rpz_new]).ravel()
             return obs
         else:
             return np.concatenate([q, dq, self.goal_rpz]).ravel()

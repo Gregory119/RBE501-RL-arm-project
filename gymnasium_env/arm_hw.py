@@ -50,7 +50,8 @@ class ArmHwEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(xml_file)
         self.data = mujoco.MjData(self.model)
 
-        get_pos_fn = self.read_pos
+        get_qpos_fn = self.read_pos
+        get_qvel_fn = self.read_vel
         load_env_fn = lambda: self.load_env()
         should_truncate_fn = lambda q: not self.in_bounds(q)
         visualize = lambda: None
@@ -64,7 +65,8 @@ class ArmHwEnv(gym.Env):
         z = 0.0254*10
         default_goal_rpz = (rho,phi,z)
         self.arm = Arm(rate_hz=rate_hz,
-                       get_pos_fn=get_pos_fn,
+                       get_qpos_fn=get_qpos_fn,
+                       get_qvel_fn=get_qvel_fn,
                        load_env_fn=load_env_fn,
                        should_truncate_fn=should_truncate_fn,
                        vis_fn=visualize,
