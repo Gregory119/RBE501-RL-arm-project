@@ -39,7 +39,6 @@ class Arm:
                  vis_fn,
                  set_obs_space_fn,
                  np_random,
-                 enable_normalize = True,
                  enable_terminate = False,
                  rpz_low = None,
                  rpz_high = None,
@@ -48,8 +47,6 @@ class Arm:
                  **kwargs):
         """Constructor
         
-        :param enable_normalize If True, normalizes the observation
-        data, which improves reward performance.
         :param enable_terminate If True, episodes are terminated when the ee
         position is within a radius of the goal. Enabling this reduces
         reward performance because future rewards in terminal states have a reward of
@@ -68,12 +65,8 @@ class Arm:
         self.set_obs_space_fn = set_obs_space_fn
         self.np_random = np_random
         
-        self.enable_normalize = enable_normalize
         self.enable_terminate = enable_terminate
-        if self.enable_normalize:
-            observation_space = Box(low=-1, high=1, shape=(15,), dtype=np.float64)
-        else:
-            observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
         self.set_obs_space_fn(observation_space)
 
         # workspace bounds
@@ -160,13 +153,13 @@ class Arm:
         min_dur = 4
         max_abs_speed = max_dist / min_dur
         curr_speed = 0.0
+        r2 = 0.0
         if self.prev_dist:
             # assume time step is constant (not true on hardware - todo)
             curr_abs_speed = abs((dist - self.prev_dist)*self.rate_hz)
-        speed_diff = curr_abs_speed - max_abs_speed
-        r2 = 0.0
-        if speed_diff > 0:
-            r2 = np.exp(-speed_diff/max_abs_speed)
+            speed_diff = curr_abs_speed - max_abs_speed
+            if speed_diff > 0:
+                r2 = np.exp(-speed_diff/max_abs_speed)
         reward = 0.5*r1 + 0.5*r2
 
         self.prev_dist = dist
@@ -259,28 +252,25 @@ class Arm:
         q = self.get_qpos_fn()
         dq = self.get_qvel_fn()
         
-        if self.enable_normalize:
-            # normalize observation data
-            q_new = (copy.deepcopy(q) - q_low) / (2*np.pi) # [0,1]
-            q_new = q_new*2-1 # [-1,1]
-            if self.assert_obs:
-                assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
-            np.clip(q_new, a_min=-1, a_max=1)
-            goal_rpz_new = np.array(self.goal_rpz)
-            if self.assert_obs:
-                assert(goal_rpz_new.shape == (3,))
-                assert(self.rpz_low.shape == (3,))
-                assert(self.rpz_high.shape == (3,))
+        # normalize observation data
+        q_new = (copy.deepcopy(q) - q_low) / (2*np.pi) # [0,1]
+        q_new = q_new*2-1 # [-1,1]
+        if self.assert_obs:
+            assert np.all(np.abs(q_new) <= 1.05), "q_new = {}, q = {}, q_low = {}".format(q_new, q, q_low)
+        np.clip(q_new, a_min=-1, a_max=1)
+        goal_rpz_new = np.array(self.goal_rpz)
+        if self.assert_obs:
+            assert(goal_rpz_new.shape == (3,))
+            assert(self.rpz_low.shape == (3,))
+            assert(self.rpz_high.shape == (3,))
 
-            goal_rpz_new = (goal_rpz_new - self.rpz_low)/(self.rpz_high - self.rpz_low)
-            # each normalized goal element is now within [0,1], but the other
-            # observations are within [-1,1] so adjust the goal elements to be
-            # within [-1,1]
-            goal_rpz_new = goal_rpz_new*2-1
-            if self.assert_obs:
-                assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
+        goal_rpz_new = (goal_rpz_new - self.rpz_low)/(self.rpz_high - self.rpz_low)
+        # each normalized goal element is now within [0,1], but the other
+        # observations are within [-1,1] so adjust the goal elements to be
+        # within [-1,1]
+        goal_rpz_new = goal_rpz_new*2-1
+        if self.assert_obs:
+            assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
 
-            obs = np.concatenate([q_new, dq, goal_rpz_new]).ravel()
-            return obs
-        else:
-            return np.concatenate([q, dq, self.goal_rpz]).ravel()
+        obs = np.concatenate([q_new, dq, goal_rpz_new]).ravel()
+        return obs
