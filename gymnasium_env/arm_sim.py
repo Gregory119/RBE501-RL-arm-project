@@ -210,10 +210,13 @@ class ArmSimEnv(MujocoEnv):
             noise_pos = self.np_random.uniform(-0.05, 0.05, size=self.model.nq)
             qpos = self.init_qpos + noise_pos
 
-        # use a fixed joint velocity so that its guaranteed to be in
-        # normalization bounds
-        qvel = self.init_qvel
-        assert np.all(np.abs(qvel) <= np.pi), "qvel = {}".format(qvel)
+        # randomize initial joint velocity over range approximately observed on
+        # hardware
+        qvel = self.arm.np_random.uniform(
+            low = -15.0,
+            high = 15.0,
+            size = (6,),
+        )
         self.set_state(qpos, qvel)
 
 

@@ -21,7 +21,7 @@ from lerobot.common.robots import (
 from lerobot.common.robots.so101_follower import SO101FollowerConfig, SO101Follower
 
 from .arm import Arm
-from .arm import xyz_to_rpz
+from .arm import xyz_to_rpz, rpz_to_xyz
 
 
 class ArmHwEnv(gym.Env):
@@ -33,7 +33,7 @@ class ArmHwEnv(gym.Env):
                  rpz_low = None,
                  rpz_high = None,
                  ):
-        robot_cfg = SO101FollowerConfig(id="follower_arm",
+        robot_cfg = SO101FollowerConfig(id="rl_follower_arm",
                                         port="/dev/ttyACM0",
                                         # (radians is not an option)
                                         use_degrees=True)
@@ -60,9 +60,9 @@ class ArmHwEnv(gym.Env):
         def set_obs_space(obs_space):
             self.observation_space = obs_space
 
-        rho = 0.0254*16
+        rho = 0.0254*12
         phi = -np.pi/2
-        z = 0.0254*10
+        z = 0.0254*15
         default_goal_rpz = (rho,phi,z)
         self.arm = Arm(rate_hz=rate_hz,
                        get_qpos_fn=get_qpos_fn,
@@ -110,7 +110,7 @@ class ArmHwEnv(gym.Env):
                 dq_dict = self.robot.bus.sync_read("Present_Velocity")
                 dq_deg_p_s = np.array([v for _,v in dq_dict.items()])
                 dq = dq_deg_p_s / 180 * np.pi
-                print("{} read velocity success".format(self.read_vel_cnt))
+                print("{} read velocity [rad]: {}".format(self.read_vel_cnt, dq))
                 return dq
             except BaseException:
                 if not failed_once:
@@ -187,6 +187,16 @@ class ArmHwEnv(gym.Env):
 
         # this just calculates reward, gets observation etc
         return self.arm.step(action, mj_model=self.model, mj_data=self.data)
+
+
+    def get_goal_xyz(self):
+        return rpz_to_xyz(self.arm.goal_rpz)
+
+
+    def get_ee_pos(self):
+        return self.arm.forward_kinematics_ee(
+            self.data.qpos, mj_model=self.model, mj_data=self.data
+        )
 
 
     def __del__(self):

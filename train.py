@@ -233,11 +233,15 @@ def main(args):
     logger = configure(str(log_dir), ["tensorboard"])
     
     # SAC agent
+    n_steps_p_env = 180*6
+    minibatch_p_env = 30*2
     model = alg(
         "MlpPolicy",
         venv,
         verbose=0,
         device=device,
+        n_steps=n_steps_p_env,
+        batch_size=minibatch_p_env*num_envs
         )
     model.set_logger(logger)
 
@@ -301,7 +305,7 @@ if __name__ == "__main__":
 
     #parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--total-steps", help="total number of environment training steps", type=int, default=4000_000)
+    parser.add_argument("--total-steps", help="total number of environment training steps", type=int, default=2000_000)
     parser.add_argument("--num-checkpoints", help="number of intermeditate models saved over training", type=int, default=10)
     parser.add_argument("--logdir", help="directory containing all logs", type=str, default="logs/")
     parser.add_argument("--vis", help="enable human render mode on the environments", action="store_true")

@@ -66,7 +66,7 @@ class Arm:
         self.np_random = np_random
         
         self.enable_terminate = enable_terminate
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(15,), dtype=np.float64)
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float64)
         self.set_obs_space_fn(observation_space)
 
         # workspace bounds
@@ -85,6 +85,7 @@ class Arm:
 
         self.prev_step_ts_ns = None
         self.prev_dist = None
+        self.prev_ee_speed = None
 
 
     def step_sleep(self, display_rate=False):
@@ -147,21 +148,39 @@ class Arm:
         assert(dist > 0)
 
         # task reward
-        r1 = np.exp(-10*dist)
-        # damping reward
+        r1 = np.exp(-dist/(self.rpz_high[0]/3))
+        # speed damping reward
         max_dist = self.rpz_high[0]*2
-        min_dur = 4
-        max_abs_speed = max_dist / min_dur
-        curr_speed = 0.0
-        r2 = 0.0
+        min_dur = 2
+        max_abs_ee_speed = max_dist / min_dur
+        curr_ee_speed = 0.0
+        r2 = 1.0
         if self.prev_dist:
             # assume time step is constant (not true on hardware - todo)
-            curr_abs_speed = abs((dist - self.prev_dist)*self.rate_hz)
-            speed_diff = curr_abs_speed - max_abs_speed
-            if speed_diff > 0:
-                r2 = np.exp(-speed_diff/max_abs_speed)
-        reward = 0.5*r1 + 0.5*r2
+            curr_ee_speed = -(dist - self.prev_dist)*self.rate_hz
+            curr_abs_ee_speed = abs(curr_ee_speed)
+            ee_speed_diff = curr_abs_ee_speed - max_abs_ee_speed
+            if ee_speed_diff > 0:
+                r2 = np.exp(-ee_speed_diff/max_abs_ee_speed)
+        # acceleration damping reward
+        max_abs_ee_accel = max_abs_ee_speed / min_dur * 2
+        r3 = 1.0
+        if self.prev_ee_speed:
+            # assume time step is constant (not true on hardware - todo)
+            curr_ee_accel = -(curr_ee_speed - self.prev_ee_speed)*self.rate_hz
+            curr_abs_ee_accel = abs(curr_ee_accel)
+            ee_accel_diff = curr_abs_ee_accel - max_abs_ee_accel
+            if ee_accel_diff > 0:
+                r3 = np.exp(-ee_accel_diff/max_abs_ee_accel/10)
+        #reward = (0.6*r1 + 0.2*r2 + 0.2*r3)/self.rate_hz
 
+        r4 = -1.0 if ee_pos[2] < self.rpz_low[2]/2 else 0.0
+        #reward = (0.9*r1 + 0.1*r2 + r4)/self.rate_hz
+        #reward = (0.9*r1 + 0.1*r3 + r4)/self.rate_hz
+        reward = r1/self.rate_hz
+
+        if self.prev_dist:
+            self.prev_ee_speed = curr_ee_speed
         self.prev_dist = dist
         
         # # if ee too close to ground, then penalize
@@ -272,5 +291,6 @@ class Arm:
         if self.assert_obs:
             assert np.all(np.abs(goal_rpz_new) <= 1), "goal_rpz_new = {}".format(goal_rpz_new)
 
-        obs = np.concatenate([q_new, dq, goal_rpz_new]).ravel()
+        obs = np.concatenate([q_new, goal_rpz_new]).ravel()
+        #obs = np.concatenate([q_new, dq, goal_rpz_new]).ravel()
         return obs
