@@ -151,17 +151,17 @@ class Arm:
         r1 = np.exp(-dist/(self.rpz_high[0]/3))
         # speed damping reward
         max_dist = self.rpz_high[0]*2
-        min_dur = 2
+        min_dur = 4
         max_abs_ee_speed = max_dist / min_dur
         curr_ee_speed = 0.0
-        r2 = 1.0
+        #r2 = 1.0
         if self.prev_dist:
             # assume time step is constant (not true on hardware - todo)
             curr_ee_speed = -(dist - self.prev_dist)*self.rate_hz
-            curr_abs_ee_speed = abs(curr_ee_speed)
-            ee_speed_diff = curr_abs_ee_speed - max_abs_ee_speed
-            if ee_speed_diff > 0:
-                r2 = np.exp(-ee_speed_diff/max_abs_ee_speed)
+            # curr_abs_ee_speed = abs(curr_ee_speed)
+            # ee_speed_diff = curr_abs_ee_speed - max_abs_ee_speed
+            # if ee_speed_diff > 0:
+            #     r2 = np.exp(-ee_speed_diff/max_abs_ee_speed)
         # acceleration damping reward
         max_abs_ee_accel = max_abs_ee_speed / min_dur * 2
         r3 = 1.0
@@ -171,30 +171,14 @@ class Arm:
             curr_abs_ee_accel = abs(curr_ee_accel)
             ee_accel_diff = curr_abs_ee_accel - max_abs_ee_accel
             if ee_accel_diff > 0:
-                r3 = np.exp(-ee_accel_diff/max_abs_ee_accel/10)
-        #reward = (0.6*r1 + 0.2*r2 + 0.2*r3)/self.rate_hz
+                r3 = np.exp(-ee_accel_diff/max_abs_ee_accel)
 
-        r4 = -1.0 if ee_pos[2] < self.rpz_low[2]/2 else 0.0
-        #reward = (0.9*r1 + 0.1*r2 + r4)/self.rate_hz
-        #reward = (0.9*r1 + 0.1*r3 + r4)/self.rate_hz
-        reward = r1/self.rate_hz
+        reward = (0.5*r1 + 0.5*r3)/self.rate_hz
 
         if self.prev_dist:
             self.prev_ee_speed = curr_ee_speed
         self.prev_dist = dist
         
-        # # if ee too close to ground, then penalize
-        # assert self.goal_rpz[-1] >= self.rpz_low[-1], "goal: {}, rpz_low: {}".format(self.goal, self.rpz_low)
-        # if xyz_to_rpz(ee_pos)[-1] < self.rpz_low[-1]:
-        #     reward -= 10
-
-        # # If holding the action constant would cause the robot to go into the
-        # # ground, then penalize. This should reduce the chance of an action
-        # # causing the physical robot to hit the table.
-        # ee_pos_hold_action = self.forward_kinematics_ee(qpos=action, mj_model=mj_model, mj_data=mj_data)
-        # ee_pos_hold_action_rpz = xyz_to_rpz(ee_pos_hold_action)
-        # if ee_pos_hold_action_rpz[-1] < self.rpz_low[-1]:
-        #     reward -= 1
 
         # side note: truncation by timeout is set externally
         truncated = self.should_truncate_fn(q=obs[:6])
@@ -267,6 +251,7 @@ class Arm:
 
     
     def get_obs(self, q_low):
+        # todo: add previous position to observation instead of noisy velocity
         assert(q_low.shape == (6,))
         q = self.get_qpos_fn()
         dq = self.get_qvel_fn()

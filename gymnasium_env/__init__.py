@@ -19,5 +19,5 @@ if enable_hw:
     register(
         id="ArmHw-v0",
         entry_point="gymnasium_env.arm_hw:ArmHwEnv",
-        max_episode_steps=400
+        max_episode_steps=300
         )

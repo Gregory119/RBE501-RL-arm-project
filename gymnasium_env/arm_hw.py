@@ -30,6 +30,7 @@ class ArmHwEnv(gym.Env):
                  rate_hz: int = 50,
                  enable_normalize = True,
                  enable_terminate = False,
+                 enable_random_goal = True,
                  rpz_low = None,
                  rpz_high = None,
                  ):
@@ -60,10 +61,13 @@ class ArmHwEnv(gym.Env):
         def set_obs_space(obs_space):
             self.observation_space = obs_space
 
-        rho = 0.0254*12
-        phi = -np.pi/2
-        z = 0.0254*15
-        default_goal_rpz = (rho,phi,z)
+        default_goal_rpz = None
+        if not enable_random_goal:
+            rho = 0.0254*12
+            phi = -np.pi/2
+            z = 0.0254*15
+            default_goal_rpz = (rho,phi,z)
+
         self.arm = Arm(rate_hz=rate_hz,
                        get_qpos_fn=get_qpos_fn,
                        get_qvel_fn=get_qvel_fn,
