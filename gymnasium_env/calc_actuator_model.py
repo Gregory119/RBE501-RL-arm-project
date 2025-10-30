@@ -33,16 +33,19 @@ def main():
     print("Km = {}, Kb = {}".format(Km, Kb))
 
     # proportional gain
-    kp_p_deg = 12
-    kp_p_rad = kp_p_deg * 180 / np.pi
+    Gp_p_deg = 12
+    Gp_p_rad = Gp_p_deg * 180 / np.pi
     
     # calculate mujoco actuator model values
-    a = Km * kp_p_rad / R
-    b1 = -Km * kp_p_rad / R
+    a = Km * Gp_p_rad / R
+    b1 = -Km * Gp_p_rad / R
     b2 = -Km * Kb / R
     b0 = 0
 
-    print("Mujoco actuator parameters:\na={}\nb1={}\nb2={}\nb0=0".format(a,b1,b2))
+    kp = -b1
+    kv = -b2
+
+    print("Mujoco actuator parameters:\na={}\nkp={}\nkv={}\nb0=0".format(a,kp,kv))
     
 
 if __name__ == "__main__":
