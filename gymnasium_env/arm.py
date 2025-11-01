@@ -155,7 +155,7 @@ class Arm:
         max_abs_ee_speed = max_dist / min_dur
         curr_ee_speed = 0.0
         #r2 = 1.0
-        if self.prev_dist:
+        if self.prev_dist is not None:
             # assume time step is constant (not true on hardware - todo)
             curr_ee_speed = -(dist - self.prev_dist)*self.rate_hz
             # curr_abs_ee_speed = abs(curr_ee_speed)
@@ -165,7 +165,7 @@ class Arm:
         # acceleration damping reward
         max_abs_ee_accel = max_abs_ee_speed / min_dur * 2
         r3 = 1.0
-        if self.prev_ee_speed:
+        if self.prev_ee_speed is not None:
             # assume time step is constant (not true on hardware - todo)
             curr_ee_accel = -(curr_ee_speed - self.prev_ee_speed)*self.rate_hz
             curr_abs_ee_accel = abs(curr_ee_accel)
@@ -175,7 +175,7 @@ class Arm:
 
         reward = (0.5*r1 + 0.5*r3)/self.rate_hz
 
-        if self.prev_dist:
+        if self.prev_dist is not None:
             self.prev_ee_speed = curr_ee_speed
         self.prev_dist = dist
         
